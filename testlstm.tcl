@@ -12,6 +12,9 @@ add_files testlstm.c device_info.c wtime.c
 create_kernel lstm -type clc
 add_files -kernel [get_kernels lstm] "lstm.cl"
 
+# Kernel Compiler Flags
+set_property -name kernel_flags -value "-g" -objects [get_kernels lstm]
+
 # Define Binary Containers
 create_opencl_binary cu_lstm
 set_property region "OCL_REGION_0" [get_opencl_binary cu_lstm]
@@ -20,6 +23,7 @@ create_compute_unit -opencl_binary [get_opencl_binary cu_lstm] -kernel [get_kern
 # Compile the design for CPU based emulation
 compile_emulation -flow cpu -opencl_binary [get_opencl_binary cu_lstm]
 # Run the compiled application in CPU based emulation mode
+#run_emulation -debug -flow cpu -args "cu_lstm.xclbin /home/saanwon/test/itc-thesis/data"
 run_emulation -flow cpu -args "cu_lstm.xclbin /home/saanwon/test/itc-thesis/data"
 
 # Compile the application to run on the accelerator card

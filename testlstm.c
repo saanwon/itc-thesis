@@ -9,6 +9,8 @@
 #include <assert.h>
 #include <CL/opencl.h>
 
+#include "kerneldefs.h"
+
 #ifndef PATH_MAX
 #define PATH_MAX        256
 #endif
@@ -63,7 +65,7 @@ static int load_vocabulary(const char *fname)
     }
     fclose(fp);
 
-    fprintf(stderr, "vocabulary size : %d\n", vocab_size);
+    printf("vocabulary size : %d\n", vocab_size);
 
     return 0;
 }
@@ -86,18 +88,22 @@ static int load_embedding_params(const char *fname)
     }
 
     if (statbuf.st_size % (vocab_size * sizeof(cl_float))) {
-        fprintf(stderr, "embedding parameter file is not aligned\n");
+        printf("embedding parameter file is not aligned\n");
         close(fd);
         return -1;
     }
 
     hidden_size = statbuf.st_size / (vocab_size * sizeof(cl_float));
-    fprintf(stderr, "hidden_size : %d\n", hidden_size);
+    printf("hidden_size : %d\n", hidden_size);
+    if (hidden_size != RNN_CELL_SIZE) {
+        printf("invalid hidden_size\n");
+        return -1;
+    }
 
     embed_matrix = (cl_float *) malloc(statbuf.st_size);
     assert(embed_matrix != NULL);
     if (read(fd, embed_matrix, statbuf.st_size) != statbuf.st_size) {
-        fprintf(stderr, "cannot read embedding parameter file\n");
+        printf("cannot read embedding parameter file\n");
         close(fd);
         return -1;
     }
@@ -106,7 +112,7 @@ static int load_embedding_params(const char *fname)
     return 0;
 }
 
-static const cl_float *load_lstm_params(const char *fname)
+static cl_float *load_lstm_params(const char *fname)
 {
     int fd = open(fname, O_RDONLY);
     if (fd == -1) {
@@ -122,7 +128,7 @@ static const cl_float *load_lstm_params(const char *fname)
     }
 
     if (statbuf.st_size != (2*hidden_size+1)*4*hidden_size*sizeof(cl_float)) {
-        fprintf(stderr, "lstm parameter file is not aligned\n");
+        printf("lstm parameter file is not aligned\n");
         close(fd);
         return NULL;
     }
@@ -130,7 +136,7 @@ static const cl_float *load_lstm_params(const char *fname)
     cl_float *params = (cl_float *) malloc(statbuf.st_size);
     assert(params != NULL);
     if (read(fd, params, statbuf.st_size) != statbuf.st_size) {
-        fprintf(stderr, "cannot read lstm parameter file\n");
+        printf("cannot read lstm parameter file\n");
         close(fd);
         return NULL;
     }
@@ -149,11 +155,20 @@ static const cl_float *load_lstm_params(const char *fname)
         }
     }
 
+#if 0
+    double org_sum = 0., new_sum = 0.;
+    for (int i = 0; i < (2*hidden_size+1)*4*hidden_size; ++i) {
+        org_sum += params[i];
+        new_sum += weights[i];
+    }
+    printf("sum of lstm weights : %f -> %f\n", org_sum, new_sum);
+#endif
+
     free(params);
     return weights;
 }
 
-static const cl_float *load_softmax_params(const char *fname)
+static cl_float *load_softmax_params(const char *fname)
 {
     int fd = open(fname, O_RDONLY);
     if (fd == -1) {
@@ -169,7 +184,7 @@ static const cl_float *load_softmax_params(const char *fname)
     }
 
     if (statbuf.st_size != (hidden_size+1)*vocab_size*sizeof(cl_float)) {
-        fprintf(stderr, "lstm parameter file is not aligned\n");
+        printf("lstm parameter file is not aligned\n");
         close(fd);
         return NULL;
     }
@@ -177,7 +192,7 @@ static const cl_float *load_softmax_params(const char *fname)
     cl_float *params = (cl_float *) malloc(statbuf.st_size);
     assert(params != NULL);
     if (read(fd, params, statbuf.st_size) != statbuf.st_size) {
-        fprintf(stderr, "cannot read lstm parameter file\n");
+        printf("cannot read lstm parameter file\n");
         close(fd);
         return NULL;
     }
@@ -193,13 +208,22 @@ static const cl_float *load_softmax_params(const char *fname)
             *w++ = params[r+vocab_size * c];
     }
 
+#if 0
+    double org_sum = 0., new_sum = 0.;
+    for (int i = 0; i < (hidden_size+1)*vocab_size; ++i) {
+        org_sum += params[i];
+        new_sum += weights[i];
+    }
+    printf("sum of softmax weights : %f -> %f\n", org_sum, new_sum);
+#endif
+
     free(params);
     return weights;
 }
 
 #define NUM_RNN_LAYERS  2
-static const cl_float *lstm_weights[NUM_RNN_LAYERS];
-static const cl_float *softmax_weights;
+static cl_float *lstm_weights[NUM_RNN_LAYERS];
+static cl_float *softmax_weights;
 static int load_parameters(const char *folder)
 {
     int status;
@@ -248,18 +272,18 @@ static int load_test_data(const char *folder)
     }
 
     if (statbuf.st_size % sizeof(cl_int)) {
-        fprintf(stderr, "test words file is not aligned\n");
+        printf("test words file is not aligned\n");
         close(fd);
         return -1;
     }
 
     test_words_size = statbuf.st_size / sizeof(cl_int);
-    fprintf(stderr, "test words size : %d\n", test_words_size);
+    printf("test words size : %d\n", test_words_size);
 
     test_words = (cl_int *) malloc(statbuf.st_size);
     assert(test_words != NULL);
     if (read(fd, test_words, statbuf.st_size) != statbuf.st_size) {
-        fprintf(stderr, "cannot read test words file\n");
+        printf("cannot read test words file\n");
         close(fd);
         return -1;
     }
@@ -271,7 +295,7 @@ static int load_test_data(const char *folder)
 static int lookup_embedding(int word, cl_float embedding[])
 {
     if (word < 0 || word >= vocab_size) {
-        fprintf(stderr, "word(%d) is out of range\n", word);
+        printf("word(%d) is out of range\n", word);
         return -1;
     }
     memcpy(embedding, embed_matrix + hidden_size * word,
@@ -286,6 +310,8 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Usage : %s <xclbin> <data folder>\n", argv[0]);
         return EXIT_FAILURE;
     }
+
+    printf("\n\n\n================================================================================\n");
 
     if (load_parameters(argv[2]) != 0)
         return EXIT_FAILURE;
@@ -340,12 +366,12 @@ int main(int argc, char *argv[])
     checkError(err, "Creating command queue");
 
     // Create the compute program from the binary file
-    printf("INFO : Loading %s\n", argv[1]);
+    printf("Loading %s\n", argv[1]);
     unsigned char *xclbin;
     int n_i;
     n_i = load_xclbin_to_memory(argv[1], (char **) &xclbin);
     if (n_i < 0) {
-        fprintf(stderr, "load_xclbin_to_memory -> %d\n", n_i);
+        printf("load_xclbin_to_memory -> %d\n", n_i);
         return EXIT_FAILURE;
     }
     size_t n = n_i;
@@ -353,7 +379,7 @@ int main(int argc, char *argv[])
     cl_program program = clCreateProgramWithBinary(context, 1, &device_id, &n,
                                     (const unsigned char **)&xclbin, &status, &err);
     if (!program || status != CL_SUCCESS || err != CL_SUCCESS) {
-            fprintf(stderr, "Error: Failed to create compute program from binary status:%d err:%d!\n", status, err);
+            printf("Error: Failed to create compute program from binary status:%d err:%d!\n", status, err);
             return EXIT_FAILURE;
     }
 
@@ -361,10 +387,10 @@ int main(int argc, char *argv[])
     if (err != CL_SUCCESS) {
         size_t len;
         char buffer[2048];
-        fprintf(stderr, "Error: Failed to build program executable!\n%s\n", err_code(err));
+        printf("Error: Failed to build program executable!\n%s\n", err_code(err));
         clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG,
                                         sizeof(buffer), buffer, &len);
-        fprintf(stderr, "%s\n", buffer);
+        printf("%s\n", buffer);
         return EXIT_FAILURE;
     }
 
@@ -373,10 +399,10 @@ int main(int argc, char *argv[])
     checkError(err, "Creating lstm kernel");
 
     // Find kernel work-group size
-    size_t work_group_size = 8;
+    size_t work_group_size = 0;
     err = clGetKernelWorkGroupInfo(kernel_lstm, device_id, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &work_group_size, NULL);
     checkError(err, "Getting kernel work group info");
-    fprintf(stderr, "work_group_size : %lu\n", work_group_size);
+    printf("work_group_size of lstm : %lu\n", work_group_size);
 
     cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
     assert(h_x != NULL);
@@ -392,95 +418,99 @@ int main(int argc, char *argv[])
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
         h_h[i] = (cl_float *) calloc(hidden_size, sizeof(cl_float));
         assert(h_h[i] != NULL);
-        h_c[i] = (cl_float *) calloc(hidden_size, sizeof(cl_float));
-        assert(h_c[i] != NULL);
-
         d_h[i] = clCreateBuffer(context, CL_MEM_READ_WRITE,
                     sizeof(cl_float) * hidden_size, NULL, &err);
         checkError(err, "Creating buffer d_h");
+        err = clEnqueueWriteBuffer(commands, d_h[i], CL_TRUE, 0,
+                    sizeof(cl_float) * hidden_size, h_h[i], 0, NULL, NULL);
+        checkError(err, "Writing buffer d_h");
+
+        h_c[i] = (cl_float *) calloc(hidden_size, sizeof(cl_float));
+        assert(h_c[i] != NULL);
         d_c[i] = clCreateBuffer(context, CL_MEM_READ_WRITE,
                     sizeof(cl_float) * hidden_size, NULL, &err);
         checkError(err, "Creating buffer d_c");
+        err = clEnqueueWriteBuffer(commands, d_c[i], CL_TRUE, 0,
+                    sizeof(cl_float) * hidden_size, h_c[i], 0, NULL, NULL);
+        checkError(err, "Writing buffer d_c");
 
         d_w[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
                     sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
                     NULL, &err);
         checkError(err, "Creating buffer d_w");
+        err = clEnqueueWriteBuffer(commands, d_w[i], CL_TRUE, 0,
+                    sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
+                    lstm_weights[i], 0, NULL, NULL);
+        checkError(err, "Writing buffer d_w");
     }
 
-#if 0
-    cl_mem d_x = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(float)*nwork_groups, NULL, &err);
-    checkError(err, "Creating buffer d_partial_sums");
-#endif
+    size_t global[3] = {RNN_CELL_SIZE, 1, 1};
+    size_t local[3]  = {RNN_CELL_SIZE, 1, 1};
 
     for (int i = 0; i < 1/*test_words_size*/; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
             return EXIT_FAILURE;
 
-        for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
-            cl_mem *d_input = (j ? &d_h[i-1] : &d_x);
+        err = clEnqueueWriteBuffer(commands, d_x, CL_TRUE, 0,
+                    sizeof(cl_float) * hidden_size, h_x, 0, NULL, NULL);
+        checkError(err, "Writing buffer d_x");
+
+        double rtime = wtime();
+
+        for (int j = 0; j < 1/*NUM_RNN_LAYERS*/; ++j) {
+            cl_mem *d_input = (j ? &d_h[j-1] : &d_x);
+
+            printf("lstm(x:%p, h:%p)\n", *d_input, d_h[j]);
+            printf("-------------------------------------------------------\n");
 
             // Set kernel arguments
             err  = clSetKernelArg(kernel_lstm, 0, sizeof(cl_int), &hidden_size);
             err |= clSetKernelArg(kernel_lstm, 1, sizeof(cl_mem), d_input);
-            err |= clSetKernelArg(kernel_lstm, 2, sizeof(cl_mem), &d_h[i]);
-            err |= clSetKernelArg(kernel_lstm, 3, sizeof(cl_mem), &d_c[i]);
-            err |= clSetKernelArg(kernel_lstm, 4, sizeof(cl_mem), &d_w[i]);
+            err |= clSetKernelArg(kernel_lstm, 2, sizeof(cl_mem), &d_h[j]);
+            err |= clSetKernelArg(kernel_lstm, 3, sizeof(cl_mem), &d_c[j]);
+            err |= clSetKernelArg(kernel_lstm, 4, sizeof(cl_mem), &d_w[j]);
             checkError(err, "Settin kernel args");
+
+            cl_event event;
+            err = clEnqueueNDRangeKernel(commands, kernel_lstm, 3, NULL,
+                    global, local, 0, NULL, &event);
+            checkError(err, "Enqueueing kernel");
+
+            err = clWaitForEvents(1, &event);
+            checkError(err, "clWaitForEvents");
         }
+
+        rtime = wtime() - rtime;
+        printf("\nThe calculation ran in %lf seconds\n", rtime);
     }
+
 #if 0
-
-    size_t nwork_groups = in_nsteps/(work_group_size*niters);
-    fprintf(stderr, "nwork_groups : %d\n", nwork_groups);
-    if (nwork_groups < 1) {
-        err = clGetDeviceInfo(device_id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(size_t), &nwork_groups, NULL);
-        checkError(err, "Getting device compute unit info");
-        work_group_size = in_nsteps / (nwork_groups * niters);
-    }
-
-    int nsteps = work_group_size * niters * nwork_groups;
-    float step_size = 1.0f/(float)nsteps;
-
-    float *h_psums = (float *) calloc(sizeof(float), nwork_groups);
-
-    printf(" %ld work-groups of size %ld. %d Integration steps\n",
-           nwork_groups, work_group_size, nsteps);
-
-    cl_mem d_partial_sums = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(float)*nwork_groups, NULL, &err);
-    checkError(err, "Creating buffer d_partial_sums");
-
-
-    size_t global = nsteps / niters;
-    size_t local  = work_group_size;
-
-    double rtime = wtime();
-    err = clEnqueueNDRangeKernel(commands, kernel_lstm, 1, NULL,
-            &global, &local, 0, NULL, NULL);
-    checkError(err, "Enqueueing kernel");
-
     err = clEnqueueReadBuffer(commands, d_partial_sums, CL_TRUE, 0,
                               sizeof(float) * nwork_groups, h_psums,
                               0, NULL,NULL);
     checkError(err, "Reading back d_partial_sums");
-
-    float pi_res = 0.0f;
-    for (unsigned int i = 0; i < nwork_groups; i++)
-        pi_res += h_psums[i];
-    pi_res *= step_size;
-
-	free(h_psums);
-
-    rtime = wtime() - rtime;
-    printf("\nThe calculation ran in %lf seconds\n", rtime);
-    printf(" pi = %f for %d steps\n", pi_res, nsteps);
-
-	clReleaseMemObject(d_partial_sums);
 #endif
+	clReleaseMemObject(d_x);
+    free(h_x);
+    for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
+        clReleaseMemObject(d_h[i]);
+        clReleaseMemObject(d_c[i]);
+        clReleaseMemObject(d_w[i]);
+        free(h_h[i]);
+        free(h_c[i]);
+        free(lstm_weights[i]);
+    }
+
 	clReleaseProgram(program);
     clReleaseKernel(kernel_lstm);
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
+
+    free(embed_matrix);
+    free(softmax_weights);
+    free(test_words);
+
+    printf("================================================================================\n\n\n\n");
 
     return EXIT_SUCCESS;
 }

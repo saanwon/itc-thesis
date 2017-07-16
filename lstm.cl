@@ -1,3 +1,5 @@
+#include "kerneldefs.h"
+
 float sigm(float x)
 {
     return 1.0f / (1.0f + exp(-x));
@@ -11,15 +13,32 @@ float sigm(float x)
  *     ......
  *     (cell n-1)
  */
-__attribute__ ((reqd_work_group_size(1, 1, 200)))
-__kernel void lstm(         const int   cell_size,
+__attribute__ ((reqd_work_group_size(RNN_CELL_SIZE, 1, 1)))
+__kernel void lstm(const int   cell_size,
                    __global const float *x,   // [cell_size]
                    __global       float *h,   // [cell_size]
                    __global       float *c,   // [cell_size]
-                   __global const float *W)   // [cell_size, (2*cell_size+1)*4]
+                   __global const float *W    // [cell_size, (2*cell_size+1)*4]
+                   )
 {
     int z;
     int idx = get_global_id(0);
+
+#if 0
+    if (idx == 0) {
+        float sum_x = 0., sum_h = 0., sum_c = 0.;
+        for (int i = 0; i < cell_size; ++i) {
+            sum_x += x[i];
+            sum_h += h[i];
+            sum_c += c[i];
+        }
+        float sum_w = 0.;
+        for (int i = 0; i < ((2*cell_size+1)*4) * cell_size; ++i)
+            sum_w += W[i];
+        printf("idx:%3d -> sum_x:%f, sum_h:%f, sum_c:%f, sum_w:%f\n",
+               idx, sum_x, sum_h, sum_c, sum_w);
+    }
+#endif
 
     W += idx * ((cell_size + cell_size + 1) * 4);
 
