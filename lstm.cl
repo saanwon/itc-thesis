@@ -54,7 +54,7 @@ __kernel void lstm(const int   cell_size,
     __global const float *Wfh = Wfx + cell_size;
     float Ft = Wfh[cell_size];
 
-    __global const float *Wox = Wfx + cell_size + 1;
+    __global const float *Wox = Wfh + cell_size + 1;
     __global const float *Woh = Wox + cell_size;
     float Ot = Woh[cell_size];
 
@@ -85,6 +85,12 @@ __kernel void lstm(const int   cell_size,
     for (z = 0; z < cell_size; ++z)
         Ot += h[z] * Woh[z];
     Ot = sigm(Ot);
+
+
+    /*
+     * Update Internal Cell status
+     */
+    barrier(CLK_GLOBAL_MEM_FENCE);
 
     // New Cell Status
     c[idx] = Ft * c[idx] + It * Jt;
