@@ -96,10 +96,12 @@ static int load_embedding_params(const char *fname)
 
     hidden_size = statbuf.st_size / (vocab_size * sizeof(cl_float));
     printf("hidden_size : %d\n", hidden_size);
+#ifdef RNN_CELL_SIZE
     if (hidden_size != RNN_CELL_SIZE) {
         printf("invalid hidden_size\n");
         return -1;
     }
+#endif
 
     embed_matrix = (cl_float *) malloc(statbuf.st_size);
     assert(embed_matrix != NULL);
@@ -353,6 +355,7 @@ int main(int argc, char *argv[])
 
     cl_int          err;
     cl_device_id    device_id = NULL;		// compute device id
+    cl_event        event;
 
     // Find number of platforms
     cl_uint numPlatforms;
@@ -480,15 +483,21 @@ int main(int argc, char *argv[])
     cl_float *probs = (cl_float *) malloc(vocab_size * sizeof(cl_float));
     assert(probs != NULL);
 
+#if 0
     size_t global[3] = {RNN_CELL_SIZE, 1, 1};
     size_t local[3]  = {RNN_CELL_SIZE, 1, 1};
+#else
+    size_t global[3] = {1, 1, 1};
+    size_t local[3]  = {1, 1, 1};
+#endif
 
 
     double rtime = wtime();
 
     cl_float costs = 0.;
     int i;
-    for (i = 0; i < (test_words_size-1); ++i) {
+//    for (i = 0; i < (test_words_size-1); ++i) {
+    for (i = 0; i < 1000; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
             return EXIT_FAILURE;
 
@@ -514,9 +523,6 @@ int main(int argc, char *argv[])
             err |= clSetKernelArg(kernel_lstm, 4, sizeof(cl_mem), &d_w[l]);
             checkError(err, "Settin kernel args");
 
-#if 0
-            cl_event event;
-#endif
             err = clEnqueueNDRangeKernel(commands, kernel_lstm, 3, NULL,
                     global, local, 0, NULL, NULL/*&event*/);
             checkError(err, "Enqueueing kernel");
@@ -525,6 +531,7 @@ int main(int argc, char *argv[])
             checkError(err, "clWaitForEvents");
 #endif
 
+#if 0
 #if 0
             err = clEnqueueReadBuffer(commands, d_h[l], CL_TRUE, 0,
                                       sizeof(cl_float) * hidden_size, h_h[l],
@@ -548,25 +555,31 @@ int main(int argc, char *argv[])
             }
             printf("\n");
 #endif
+#endif
         }
 
         int l = NUM_RNN_LAYERS-1;
         err = clEnqueueReadBuffer(commands, d_h[l], CL_TRUE, 0,
                                   sizeof(cl_float) * hidden_size, h_h[l],
                                   0, NULL, NULL);
+
         checkError(err, "Reading back d_h");
 
+#if 0
         softmax(h_h[l], probs);
 
         costs += cross_entropy(probs, test_words[i+1]);
+#endif
     }
 
     rtime = wtime() - rtime;
     printf("\nThe calculation ran in %lf seconds\n", rtime);
+#if 0
     printf("Cross Entropy : %.8f\n", costs);
     printf("Perplexity : %.8f\n", exp(costs / i));
+#endif
 
-	clReleaseMemObject(d_x);
+    clReleaseMemObject(d_x);
     free(h_x);
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
         clReleaseMemObject(d_h[i]);
@@ -577,7 +590,7 @@ int main(int argc, char *argv[])
         free(lstm_weights[i]);
     }
 
-	clReleaseProgram(program);
+    clReleaseProgram(program);
     clReleaseKernel(kernel_lstm);
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
