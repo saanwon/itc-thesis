@@ -9,7 +9,7 @@ HOST_EXE = testlstm
 HOST_CFLAGS = -g -Wall -DFPGA_DEVICE -DC_KERNEL 
 HOST_LFLAGS = 
 
-KERNEL_SRCS = lstm.cl
+KERNEL_SRCS = $(VPATH)/lstm.cl
 KERNEL_NAME = lstm
 KERNEL_DEFS = 
 KERNEL_INCS = 
@@ -17,8 +17,7 @@ KERNEL_INCS =
 #XDEVICE=xilinx:pea-c8k1-115:1ddr:4.0
 XDEVICE=xilinx:adm-pcie-ku3:2ddr:3.3
 XDEVICE_REPO_PATH=
-#KEEP_TEMP=1
-KEEP_TEMP=0
+KEEP_TEMP=1
 KERNEL_DEBUG=
 XCLBIN_NAME=bin_lstm
 HOST_CFLAGS+=-DTARGET_DEVICE=\"${XDEVICE}\"
@@ -36,6 +35,6 @@ else ifeq (${SDA_FLOW},hw)
     CLCC_OPT += -t hw
 endif
 
-HOST_ARGS = ${XCLBIN} ./data
+HOST_ARGS = ${XCLBIN} ../../data.tiny
 
-include sdx_common.mk
+include common.mk

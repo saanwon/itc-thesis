@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?fileVersion 4.0.0?><cproject storage_type_id="org.eclipse.cdt.core.XmlProjectDescriptionStorage">
+	<storageModule moduleId="org.eclipse.cdt.core.settings">
+		<cconfiguration id="com.xilinx.sdx.opencl.config.sw_emu.1783004739">
+			<storageModule buildSystemId="org.eclipse.cdt.managedbuilder.core.configurationDataProvider" id="com.xilinx.sdx.opencl.config.sw_emu.1783004739" moduleId="org.eclipse.cdt.core.settings" name="Emulation-CPU">
+				<externalSettings/>
+				<extensions>
+					<extension id="org.eclipse.cdt.core.GLDErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="com.xilinx.sdx.opencl.managedbuild.XoccErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.GCCErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+				</extensions>
+			</storageModule>
+			<storageModule moduleId="cdtBuildSystem" version="4.0.0">
+				<configuration artifactName="${ProjName}" buildArtefactType="com.xilinx.sdx.opencl.buildArtefactType.hostExe" buildProperties="org.eclipse.cdt.build.core.buildArtefactType=com.xilinx.sdx.opencl.buildArtefactType.hostExe" description="" id="com.xilinx.sdx.opencl.config.sw_emu.1783004739" name="Emulation-CPU" parent="com.xilinx.sdx.opencl.config.sw_emu">
+					<folderInfo id="com.xilinx.sdx.opencl.config.sw_emu.1783004739." name="/" resourcePath="">
+						<toolChain id="com.xilinx.sdx.opencl.toolchain.sw_emu.debug.1774827415" name="Xilinx SDx OpenCL Toolchain (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.sw_emu.debug">
+							<option id="com.xilinx.sdx.opencl.toolchain.sw_emu.debug.option.kernel_debug.1422283387" name="Enable debugging by default for kernel code" superClass="com.xilinx.sdx.opencl.toolchain.sw_emu.debug.option.kernel_debug"/>
+							<targetPlatform id="com.xilinx.sdx.opencl.config.sw_emu.1783004739..1268072470" name=""/>
+							<builder buildPath="${workspace_loc:/itc-thesis}/Emulation-CPU" enableAutoBuild="true" id="com.xilinx.sdx.opencl.make_builder.538440118" managedBuildOn="true" name="Xilinx SDx OpenCL Builder.Emulation-CPU" superClass="com.xilinx.sdx.opencl.make_builder"/>
+							<tool id="com.xilinx.sdx.opencl.toolchain.xocc_compiler.1573370247" name="SDx XOCC Kernel Compiler" superClass="com.xilinx.sdx.opencl.toolchain.xocc_compiler">
+								<inputType id="com.xilinx.sdx.opencl.toolchain.xocc_compiler.input.cl.1489532340" name="OpenCL files" superClass="com.xilinx.sdx.opencl.toolchain.xocc_compiler.input.cl"/>
+							</tool>
+							<tool id="com.xilinx.sdx.opencl.toolchain.xocc_linker.1687572350" name="SDx XOCC Kernel Linker" superClass="com.xilinx.sdx.opencl.toolchain.xocc_linker"/>
+							<tool id="com.xilinx.sdx.opencl.emconfigutil.2048061019" name="emconfigutil" superClass="com.xilinx.sdx.opencl.emconfigutil"/>
+							<tool id="com.xilinx.sdx.opencl.toolchain.gcc_compiler.sw_emu.debug.749218365" name="SDx GCC Host Compiler (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.gcc_compiler.sw_emu.debug">
+								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.972429097" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input"/>
+							</tool>
+							<tool id="com.xilinx.sdx.opencl.toolchain.gcc_linker.hw.1166522370" name="SDx GCC Host Linker (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.gcc_linker.hw">
+								<inputType id="cdt.managedbuild.tool.gnu.cpp.linker.input.1702410073" superClass="cdt.managedbuild.tool.gnu.cpp.linker.input">
+									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
+									<additionalInput kind="additionalinput" paths="$(LIBS)"/>
+								</inputType>
+							</tool>
+						</toolChain>
+					</folderInfo>
+				</configuration>
+			</storageModule>
+			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
+		</cconfiguration>
+		<cconfiguration id="com.xilinx.sdx.opencl.config.hw_emu.559842846">
+			<storageModule buildSystemId="org.eclipse.cdt.managedbuilder.core.configurationDataProvider" id="com.xilinx.sdx.opencl.config.hw_emu.559842846" moduleId="org.eclipse.cdt.core.settings" name="Emulation-HW">
+				<externalSettings/>
+				<extensions>
+					<extension id="org.eclipse.cdt.core.GLDErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="com.xilinx.sdx.opencl.managedbuild.XoccErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.GCCErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+				</extensions>
+			</storageModule>
+			<storageModule moduleId="cdtBuildSystem" version="4.0.0">
+				<configuration artifactName="${ProjName}" buildArtefactType="com.xilinx.sdx.opencl.buildArtefactType.hostExe" buildProperties="org.eclipse.cdt.build.core.buildArtefactType=com.xilinx.sdx.opencl.buildArtefactType.hostExe" description="" id="com.xilinx.sdx.opencl.config.hw_emu.559842846" name="Emulation-HW" parent="com.xilinx.sdx.opencl.config.hw_emu">
+					<folderInfo id="com.xilinx.sdx.opencl.config.hw_emu.559842846." name="/" resourcePath="">
+						<toolChain id="com.xilinx.sdx.opencl.toolchain.hw_emu.debug.354797840" name="Xilinx SDx OpenCL Toolchain (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.hw_emu.debug">
+							<option id="com.xilinx.sdx.opencl.toolchain.hw_emu.debug.option.kernel_debug.1866060421" name="Enable debugging by default for kernel code" superClass="com.xilinx.sdx.opencl.toolchain.hw_emu.debug.option.kernel_debug"/>
+							<targetPlatform id="com.xilinx.sdx.opencl.config.hw_emu.559842846..1521330856" name=""/>
+							<builder buildPath="${workspace_loc:/itc-thesis}/Emulation-HW" enableAutoBuild="true" id="com.xilinx.sdx.opencl.make_builder.1935628364" managedBuildOn="true" name="Xilinx SDx OpenCL Builder.Emulation-HW" superClass="com.xilinx.sdx.opencl.make_builder"/>
+							<tool id="com.xilinx.sdx.opencl.toolchain.xocc_compiler.1925184583" name="SDx XOCC Kernel Compiler" superClass="com.xilinx.sdx.opencl.toolchain.xocc_compiler">
+								<inputType id="com.xilinx.sdx.opencl.toolchain.xocc_compiler.input.cl.2146938609" name="OpenCL files" superClass="com.xilinx.sdx.opencl.toolchain.xocc_compiler.input.cl"/>
+							</tool>
+							<tool id="com.xilinx.sdx.opencl.toolchain.xocc_linker.1440676877" name="SDx XOCC Kernel Linker" superClass="com.xilinx.sdx.opencl.toolchain.xocc_linker"/>
+							<tool id="com.xilinx.sdx.opencl.emconfigutil.981835734" name="emconfigutil" superClass="com.xilinx.sdx.opencl.emconfigutil"/>
+							<tool id="com.xilinx.sdx.opencl.toolchain.gcc_compiler.hw_emu.debug.197838466" name="SDx GCC Host Compiler (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.gcc_compiler.hw_emu.debug">
+								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.961160083" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input"/>
+							</tool>
+							<tool id="com.xilinx.sdx.opencl.toolchain.gcc_linker.hw.1894305556" name="SDx GCC Host Linker (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.gcc_linker.hw">
+								<inputType id="cdt.managedbuild.tool.gnu.cpp.linker.input.1552329381" superClass="cdt.managedbuild.tool.gnu.cpp.linker.input">
+									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
+									<additionalInput kind="additionalinput" paths="$(LIBS)"/>
+								</inputType>
+							</tool>
+						</toolChain>
+					</folderInfo>
+				</configuration>
+			</storageModule>
+			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
+		</cconfiguration>
+		<cconfiguration id="com.xilinx.sdx.opencl.config.hw.1518402671">
+			<storageModule buildSystemId="org.eclipse.cdt.managedbuilder.core.configurationDataProvider" id="com.xilinx.sdx.opencl.config.hw.1518402671" moduleId="org.eclipse.cdt.core.settings" name="System">
+				<externalSettings/>
+				<extensions>
+					<extension id="org.eclipse.cdt.core.GLDErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="com.xilinx.sdx.opencl.managedbuild.XoccErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.GCCErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+				</extensions>
+			</storageModule>
+			<storageModule moduleId="cdtBuildSystem" version="4.0.0">
+				<configuration artifactExtension="exe" artifactName="${ProjName}" buildArtefactType="com.xilinx.sdx.opencl.buildArtefactType.hostExe" buildProperties="org.eclipse.cdt.build.core.buildArtefactType=com.xilinx.sdx.opencl.buildArtefactType.hostExe" cleanCommand="rm -rf" description="" id="com.xilinx.sdx.opencl.config.hw.1518402671" name="System" parent="com.xilinx.sdx.opencl.config.hw">
+					<folderInfo id="com.xilinx.sdx.opencl.config.hw.1518402671." name="/" resourcePath="">
+						<toolChain id="com.xilinx.sdx.opencl.toolchain.hw.105563222" name="Xilinx SDx OpenCL Toolchain (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.hw">
+							<targetPlatform id="com.xilinx.sdx.opencl.config.hw.1518402671..383637804" name=""/>
+							<builder buildPath="${workspace_loc:/itc-thesis}/System" enableAutoBuild="true" id="com.xilinx.sdx.opencl.make_builder.2088817722" managedBuildOn="true" name="Xilinx SDx OpenCL Builder.System" superClass="com.xilinx.sdx.opencl.make_builder"/>
+							<tool id="com.xilinx.sdx.opencl.toolchain.xocc_compiler.844807205" name="SDx XOCC Kernel Compiler" superClass="com.xilinx.sdx.opencl.toolchain.xocc_compiler">
+								<inputType id="com.xilinx.sdx.opencl.toolchain.xocc_compiler.input.cl.2012189111" name="OpenCL files" superClass="com.xilinx.sdx.opencl.toolchain.xocc_compiler.input.cl"/>
+							</tool>
+							<tool id="com.xilinx.sdx.opencl.toolchain.xocc_linker.799007714" name="SDx XOCC Kernel Linker" superClass="com.xilinx.sdx.opencl.toolchain.xocc_linker"/>
+							<tool id="com.xilinx.sdx.opencl.emconfigutil.709528945" name="emconfigutil" superClass="com.xilinx.sdx.opencl.emconfigutil"/>
+							<tool id="com.xilinx.sdx.opencl.toolchain.gcc_compiler.hw.544023025" name="SDx GCC Host Compiler (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.gcc_compiler.hw">
+								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.1426636063" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input"/>
+							</tool>
+							<tool id="com.xilinx.sdx.opencl.toolchain.gcc_linker.hw.532917034" name="SDx GCC Host Linker (x86_64)" superClass="com.xilinx.sdx.opencl.toolchain.gcc_linker.hw">
+								<inputType id="cdt.managedbuild.tool.gnu.cpp.linker.input.708232821" superClass="cdt.managedbuild.tool.gnu.cpp.linker.input">
+									<additionalInput kind="additionalinputdependency" paths="$(USER_OBJS)"/>
+									<additionalInput kind="additionalinput" paths="$(LIBS)"/>
+								</inputType>
+							</tool>
+						</toolChain>
+					</folderInfo>
+				</configuration>
+			</storageModule>
+			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
+		</cconfiguration>
+	</storageModule>
+	<storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders"/>
+	<storageModule moduleId="cdtBuildSystem" version="4.0.0">
+		<project id="itc-thesis.com.xilinx.sdx.opencl.project.1804105299" name="Xilinx SDx OpenCL Project" projectType="com.xilinx.sdx.opencl.project"/>
+	</storageModule>
+	<storageModule moduleId="scannerConfiguration">
+		<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+	</storageModule>
+</cproject>
