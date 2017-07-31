@@ -3,12 +3,14 @@
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
 
-void lstm_cell(const int      idx,
-               const int      cell_size,
+void lstm_cell(         const int   idx,
+                        const int   cell_size,
                __global const float *x,   // [cell_size]
                __global       float *h,   // [cell_size]
                __global       float *c,   // [cell_size]
-               __global const float *W    // [cell_size, (2*cell_size+1)*4]
+               __global const float *W,   // [cell_size, (2*cell_size+1)*4]
+			   __local        float *new_h,
+			   __local        float *new_c
               )
 {
     int z;
@@ -76,15 +78,10 @@ void lstm_cell(const int      idx,
         Ot += h[z] * Woh[z];
     Ot = act_sigm(Ot);
 
-    /*
-     * Update Internal Cell status
-     */
-    barrier(CLK_GLOBAL_MEM_FENCE);
-
     // New Cell Status
-    c[idx] = Ft * c[idx] + It * Jt;
+    *new_c = Ft * c[idx] + It * Jt;
     // New Hidden Status
-    h[idx] = Ot * act_tanh(c[idx]);
+    *new_h = Ot * act_tanh(*new_c);
 }
 
 /*
@@ -95,14 +92,40 @@ void lstm_cell(const int      idx,
  *     ......
  *     (cell n-1)
  */
-__attribute__ ((reqd_work_group_size(1, 1, 1)))
+__attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
 __kernel void lstm(const int   cell_size,
                    __global const float *x,   // [cell_size]
                    __global       float *h,   // [cell_size]
                    __global       float *c,   // [cell_size]
-                   __global const float *W    // [cell_size, (2*cell_size+1)*4]
+                   __global const float *W,   // [cell_size, (2*cell_size+1)*4]
+				   __local        float *new_h,
+				   __local        float *new_c
                    )
 {
-    for (int i = 0; i < cell_size; ++i)
-        lstm_cell(i, cell_size, x, h, c, W);
+#if WORK_GROUP_SIZE > 1
+	int idx = get_global_id(0);
+
+	lstm_cell(idx, cell_size, x, h, c, W, new_h + idx, new_c + idx);
+
+    /*
+     * Update Internal Cell status
+     */
+    barrier(CLK_GLOBAL_MEM_FENCE);
+
+    if (idx == (cell_size-1)) {
+		for (int i = 0; i < cell_size; ++i) {
+			c[i] = new_c[i];
+			h[i] = new_h[i];
+		}
+    }
+#else /* WORK_GROUP_SIZE */
+    int i;
+
+    for (i = 0; i < cell_size; ++i)
+        lstm_cell(i, cell_size, x, h, c, W, new_h + i, new_c + i);
+    for (i = 0; i < cell_size; ++i) {
+    	c[i] = new_c[i];
+    	h[i] = new_h[i];
+    }
+#endif /* WORK_GROUP_SIZE */
 }

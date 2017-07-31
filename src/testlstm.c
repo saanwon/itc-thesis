@@ -16,6 +16,14 @@
 #define PATH_MAX        256
 #endif
 
+#define DEFAULT_DATA_DIR		"../../data.tiny"
+
+#define TEST_LOOP_COUNT	(test_words_size-1)
+//#define TEST_LOOP_COUNT	1000
+//#define TEST_LOOP_COUNT	2
+
+#define CALC_PERPLEXITY
+
 #include "err_code.h"
 extern int output_device_info(cl_device_id device_id);
 extern double wtime();       // returns time since some fixed past point (wtime.c)
@@ -341,16 +349,20 @@ static cl_float cross_entropy(const cl_float *probs, int vocab)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3) {
+    if (argc < 2) {
         fprintf(stderr, "Usage : %s <xclbin> <data folder>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
+    const char *data_dir = DEFAULT_DATA_DIR;
+    if (argc >= 3)
+    	data_dir = argv[2];
+
     printf("\n\n\n================================================================================\n");
 
-    if (load_parameters(argv[2]) != 0)
+    if (load_parameters(data_dir) != 0)
         return EXIT_FAILURE;
-    if (load_test_data(argv[2]) != 0)
+    if (load_test_data(data_dir) != 0)
         return EXIT_FAILURE;
 
     cl_int          err;
@@ -483,21 +495,17 @@ int main(int argc, char *argv[])
     cl_float *probs = (cl_float *) malloc(vocab_size * sizeof(cl_float));
     assert(probs != NULL);
 
-#if 0
-    size_t global[3] = {RNN_CELL_SIZE, 1, 1};
-    size_t local[3]  = {RNN_CELL_SIZE, 1, 1};
-#else
-    size_t global[3] = {1, 1, 1};
-    size_t local[3]  = {1, 1, 1};
-#endif
-
+    size_t global[3] = {WORK_GROUP_SIZE, 1, 1};
+    size_t local[3]  = {WORK_GROUP_SIZE, 1, 1};
 
     double rtime = wtime();
 
+#ifdef CALC_PERPLEXITY
     cl_float costs = 0.;
+#endif
+    int percent = 0;
     int i;
-//    for (i = 0; i < (test_words_size-1); ++i) {
-    for (i = 0; i < 1000; ++i) {
+    for (i = 0; i < TEST_LOOP_COUNT; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
             return EXIT_FAILURE;
 
@@ -521,6 +529,8 @@ int main(int argc, char *argv[])
             err |= clSetKernelArg(kernel_lstm, 2, sizeof(cl_mem), &d_h[l]);
             err |= clSetKernelArg(kernel_lstm, 3, sizeof(cl_mem), &d_c[l]);
             err |= clSetKernelArg(kernel_lstm, 4, sizeof(cl_mem), &d_w[l]);
+            err |= clSetKernelArg(kernel_lstm, 5, hidden_size*sizeof(cl_float), NULL);
+            err |= clSetKernelArg(kernel_lstm, 6, hidden_size*sizeof(cl_float), NULL);
             checkError(err, "Settin kernel args");
 
             err = clEnqueueNDRangeKernel(commands, kernel_lstm, 3, NULL,
@@ -531,7 +541,6 @@ int main(int argc, char *argv[])
             checkError(err, "clWaitForEvents");
 #endif
 
-#if 0
 #if 0
             err = clEnqueueReadBuffer(commands, d_h[l], CL_TRUE, 0,
                                       sizeof(cl_float) * hidden_size, h_h[l],
@@ -555,7 +564,6 @@ int main(int argc, char *argv[])
             }
             printf("\n");
 #endif
-#endif
         }
 
         int l = NUM_RNN_LAYERS-1;
@@ -565,16 +573,20 @@ int main(int argc, char *argv[])
 
         checkError(err, "Reading back d_h");
 
-#if 0
+#ifdef CALC_PERPLEXITY
         softmax(h_h[l], probs);
-
         costs += cross_entropy(probs, test_words[i+1]);
 #endif
+
+        if (percent != (i * 100) / TEST_LOOP_COUNT) {
+			percent = (i * 100) / TEST_LOOP_COUNT;
+			printf("\r%d%%", percent);
+        }
     }
 
     rtime = wtime() - rtime;
     printf("\nThe calculation ran in %lf seconds\n", rtime);
-#if 0
+#ifdef CALC_PERPLEXITY
     printf("Cross Entropy : %.8f\n", costs);
     printf("Perplexity : %.8f\n", exp(costs / i));
 #endif
