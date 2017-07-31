@@ -529,8 +529,7 @@ int main(int argc, char *argv[])
             err |= clSetKernelArg(kernel_lstm, 2, sizeof(cl_mem), &d_h[l]);
             err |= clSetKernelArg(kernel_lstm, 3, sizeof(cl_mem), &d_c[l]);
             err |= clSetKernelArg(kernel_lstm, 4, sizeof(cl_mem), &d_w[l]);
-            err |= clSetKernelArg(kernel_lstm, 5, hidden_size*sizeof(cl_float), NULL);
-            err |= clSetKernelArg(kernel_lstm, 6, hidden_size*sizeof(cl_float), NULL);
+            err |= clSetKernelArg(kernel_lstm, 5, hidden_size*sizeof(cl_float)*5, NULL);
             checkError(err, "Settin kernel args");
 
             err = clEnqueueNDRangeKernel(commands, kernel_lstm, 3, NULL,
@@ -581,6 +580,7 @@ int main(int argc, char *argv[])
         if (percent != (i * 100) / TEST_LOOP_COUNT) {
 			percent = (i * 100) / TEST_LOOP_COUNT;
 			printf("\r%d%%", percent);
+			fflush(stdout);
         }
     }
 

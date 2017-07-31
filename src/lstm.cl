@@ -5,9 +5,9 @@
 
 void lstm_cell(         const int   idx,
                         const int   cell_size,
-               __global const float *x,   // [cell_size]
-               __global       float *h,   // [cell_size]
-               __global       float *c,   // [cell_size]
+               __local  const float *x,   // [cell_size]
+               __local        float *h,   // [cell_size]
+               __local        float *c,   // [cell_size]
                __global const float *W,   // [cell_size, (2*cell_size+1)*4]
 			   __local        float *new_h,
 			   __local        float *new_c
@@ -98,8 +98,7 @@ __kernel void lstm(const int   cell_size,
                    __global       float *h,   // [cell_size]
                    __global       float *c,   // [cell_size]
                    __global const float *W,   // [cell_size, (2*cell_size+1)*4]
-				   __local        float *new_h,
-				   __local        float *new_c
+				   __local        float *lbuf
                    )
 {
 #if WORK_GROUP_SIZE > 1
@@ -120,9 +119,20 @@ __kernel void lstm(const int   cell_size,
     }
 #else /* WORK_GROUP_SIZE */
     int i;
+    event_t evt[3];
+
+    __local float *new_h = lbuf;
+    __local float *new_c = new_h + cell_size;
+    __local float *l_x   = new_c + cell_size;
+    __local float *old_h = l_x   + cell_size;
+    __local float *old_c = old_h + cell_size;
+
+    evt[0] = async_work_group_copy(l_x,   x, cell_size, 0);
+    evt[1] = async_work_group_copy(old_h, h, cell_size, 0);
+    evt[2] = async_work_group_copy(old_c, c, cell_size, 0);
 
     for (i = 0; i < cell_size; ++i)
-        lstm_cell(i, cell_size, x, h, c, W, new_h + i, new_c + i);
+        lstm_cell(i, cell_size, l_x, old_h, old_c, W, new_h + i, new_c + i);
     for (i = 0; i < cell_size; ++i) {
     	c[i] = new_c[i];
     	h[i] = new_h[i];
