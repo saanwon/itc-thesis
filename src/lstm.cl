@@ -130,6 +130,7 @@ __kernel void lstm(const int   cell_size,
     evt[0] = async_work_group_copy(l_x,   x, cell_size, 0);
     evt[1] = async_work_group_copy(old_h, h, cell_size, 0);
     evt[2] = async_work_group_copy(old_c, c, cell_size, 0);
+    wait_group_events(3, evt);
 
     for (i = 0; i < cell_size; ++i)
         lstm_cell(i, cell_size, l_x, old_h, old_c, W, new_h + i, new_c + i);
