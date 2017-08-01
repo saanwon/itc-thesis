@@ -115,7 +115,7 @@ int output_device_info(cl_device_id device_id)
     }
    printf("work group, work item information");
    printf("\n max loc dim ");
-   for(int i=0; i< max_work_itm_dims; i++)
+   for(unsigned i=0; i< max_work_itm_dims; i++)
      printf(" %d ",(int)(*(max_loc_size+i)));
    printf("\n");
    printf(" Max work group size = %d\n",(int)max_wrkgrp_size);

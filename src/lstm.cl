@@ -92,14 +92,17 @@ void lstm_cell(         const int   idx,
  *     ......
  *     (cell n-1)
  */
+#ifndef MULTI_LSTM_LAYER
 __attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
-__kernel void lstm(const int   cell_size,
-                   __global const float *x,   // [cell_size]
-                   __global       float *h,   // [cell_size]
-                   __global       float *c,   // [cell_size]
-                   __global const float *W,   // [cell_size, (2*cell_size+1)*4]
-				   __local        float *lbuf
-                   )
+__kernel
+#endif /* ! MULTI_LSTM_LAYER */
+void lstm(         const int   cell_size,
+          __global const float *x,   // [cell_size]
+          __global       float *h,   // [cell_size]
+          __global       float *c,   // [cell_size]
+          __global const float *W,   // [cell_size, (2*cell_size+1)*4]
+		  __local        float *lbuf
+         )
 {
 #if WORK_GROUP_SIZE > 1
 	int idx = get_global_id(0);
@@ -132,7 +135,7 @@ __kernel void lstm(const int   cell_size,
     evt[2] = async_work_group_copy(old_c, c, cell_size, 0);
     wait_group_events(3, evt);
 
-    __attribute__((opencl_unroll_hint(RNN_CELL_SIZE)))
+    //__attribute__((opencl_unroll_hint(RNN_CELL_SIZE)))
     for (i = 0; i < cell_size; ++i)
         lstm_cell(i, cell_size, l_x, old_h, old_c, W, new_h + i, new_c + i);
     for (i = 0; i < cell_size; ++i) {
@@ -141,3 +144,28 @@ __kernel void lstm(const int   cell_size,
     }
 #endif /* WORK_GROUP_SIZE */
 }
+
+#ifdef MULTI_LSTM_LAYER
+__attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
+__kernel void lstm0(         const int   cell_size,
+                    __global const float *x,   // [cell_size]
+                    __global       float *h,   // [cell_size]
+                    __global       float *c,   // [cell_size]
+                    __global const float *W,   // [cell_size, (2*cell_size+1)*4]
+				    __local        float *lbuf
+                   )
+{
+	lstm(cell_size, x, h, c, W, lbuf);
+}
+__attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
+__kernel void lstm1(         const int   cell_size,
+                    __global const float *x,   // [cell_size]
+                    __global       float *h,   // [cell_size]
+                    __global       float *c,   // [cell_size]
+                    __global const float *W,   // [cell_size, (2*cell_size+1)*4]
+				    __local        float *lbuf
+                   )
+{
+	lstm(cell_size, x, h, c, W, lbuf);
+}
+#endif

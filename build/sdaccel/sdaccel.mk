@@ -10,7 +10,7 @@ HOST_CFLAGS = -g -Wall -DFPGA_DEVICE -DC_KERNEL
 HOST_LFLAGS = 
 
 KERNEL_SRCS = $(VPATH)/lstm.cl
-KERNEL_NAME = lstm
+#KERNEL_NAME = lstm
 KERNEL_DEFS = 
 KERNEL_INCS = 
 #set target device for XCLBIN

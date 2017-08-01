@@ -25,7 +25,7 @@ ifeq (${KERNEL_DEBUG},1)
     CLCC_OPT += -g
 endif
 
-CLCC_OPT += --kernel ${KERNEL_NAME}
+#CLCC_OPT += --kernel ${KERNEL_NAME}
 #OBJECTS := $(HOST_SRCS:.cpp=.o)
 OBJECTS := $(HOST_SRCS:.c=.o)
 
