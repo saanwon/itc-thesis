@@ -21,6 +21,7 @@
 #define TEST_LOOP_COUNT	(test_words_size-1)
 //#define TEST_LOOP_COUNT	1000
 //#define TEST_LOOP_COUNT	2
+#define TEST_LOOP_COUNT	1
 
 #define CALC_PERPLEXITY
 
@@ -232,7 +233,6 @@ static cl_float *load_softmax_params(const char *fname)
     return weights;
 }
 
-#define NUM_RNN_LAYERS  2
 static cl_float *lstm_weights[NUM_RNN_LAYERS];
 static cl_float *softmax_weights;
 static int load_parameters(const char *folder)
@@ -367,7 +367,6 @@ int main(int argc, char *argv[])
 
     cl_int          err;
     cl_device_id    device_id = NULL;		// compute device id
-    //cl_event        event;
 
     // Find number of platforms
     cl_uint numPlatforms;
@@ -410,7 +409,8 @@ int main(int argc, char *argv[])
     checkError(err, "Creating context");
 
     // Create a command queue
-    cl_command_queue commands = clCreateCommandQueue(context, device_id, 0, &err);
+    cl_command_queue commands = clCreateCommandQueue(context, device_id,
+    		CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, &err);
     checkError(err, "Creating command queue");
 
     // Create the compute program from the binary file
@@ -443,26 +443,19 @@ int main(int argc, char *argv[])
     }
 
     // Create the compute kernel from the program
-#ifdef MULTI_LSTM_LAYER
+    cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
+	checkError(err, "Creating lstm kernel");
+
     cl_kernel kernel_lstm[NUM_RNN_LAYERS];
     for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
     	char kernel_name[64];
-    	sprintf(kernel_name, "lstm%d", l);
+    	sprintf(kernel_name, "lstm_layer%d", l);
 		kernel_lstm[l] = clCreateKernel(program, kernel_name, &err);
 		checkError(err, "Creating lstm kernel");
     }
-#else /* MULTI_LSTM_LAYER */
-    cl_kernel kernel_lstm = clCreateKernel(program, "lstm", &err);
-    checkError(err, "Creating lstm kernel");
-#endif /* MULTI_LSTM_LAYER */
 
-#if 0
-    // Find kernel work-group size
-    size_t work_group_size = 0;
-    err = clGetKernelWorkGroupInfo(kernel_lstm, device_id, CL_KERNEL_WORK_GROUP_SIZE, sizeof(size_t), &work_group_size, NULL);
-    checkError(err, "Getting kernel work group info");
-    printf("work_group_size of lstm : %lu\n", work_group_size);
-#endif
+    cl_kernel kernel_output = clCreateKernel(program, "lstm_output", &err);
+	checkError(err, "Creating lstm kernel");
 
     cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
     assert(h_x != NULL);
@@ -471,28 +464,21 @@ int main(int argc, char *argv[])
     checkError(err, "Creating buffer d_x");
 
     cl_float *h_h[NUM_RNN_LAYERS];
-    cl_float *h_c[NUM_RNN_LAYERS];
     cl_mem d_h[NUM_RNN_LAYERS];
-    cl_mem d_c[NUM_RNN_LAYERS];
     cl_mem d_w[NUM_RNN_LAYERS];
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
+    	cl_event event;
+
         h_h[i] = (cl_float *) calloc(hidden_size, sizeof(cl_float));
         assert(h_h[i] != NULL);
         d_h[i] = clCreateBuffer(context, CL_MEM_READ_WRITE,
                     sizeof(cl_float) * hidden_size, NULL, &err);
         checkError(err, "Creating buffer d_h");
         err = clEnqueueWriteBuffer(commands, d_h[i], CL_TRUE, 0,
-                    sizeof(cl_float) * hidden_size, h_h[i], 0, NULL, NULL);
+                    sizeof(cl_float) * hidden_size, h_h[i], 0, NULL, &event);
         checkError(err, "Writing buffer d_h");
-
-        h_c[i] = (cl_float *) calloc(hidden_size, sizeof(cl_float));
-        assert(h_c[i] != NULL);
-        d_c[i] = clCreateBuffer(context, CL_MEM_READ_WRITE,
-                    sizeof(cl_float) * hidden_size, NULL, &err);
-        checkError(err, "Creating buffer d_c");
-        err = clEnqueueWriteBuffer(commands, d_c[i], CL_TRUE, 0,
-                    sizeof(cl_float) * hidden_size, h_c[i], 0, NULL, NULL);
-        checkError(err, "Writing buffer d_c");
+        err = clWaitForEvents(1, &event);
+        checkError(err, "clWaitForEvents");
 
         d_w[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
                     sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
@@ -500,112 +486,99 @@ int main(int argc, char *argv[])
         checkError(err, "Creating buffer d_w");
         err = clEnqueueWriteBuffer(commands, d_w[i], CL_TRUE, 0,
                     sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
-                    lstm_weights[i], 0, NULL, NULL);
+                    lstm_weights[i], 0, NULL, &event);
         checkError(err, "Writing buffer d_w");
+        err = clWaitForEvents(1, &event);
+        checkError(err, "clWaitForEvents");
     }
 
     cl_float *probs = (cl_float *) malloc(vocab_size * sizeof(cl_float));
     assert(probs != NULL);
 
+#if WORK_GROUP_SIZE > 1
     size_t global[3] = {WORK_GROUP_SIZE, 1, 1};
     size_t local[3]  = {WORK_GROUP_SIZE, 1, 1};
+#endif
 
     double rtime = wtime();
 
-#ifdef MULTI_LSTM_LAYER
+	// Set kernel arguments
+	err = clSetKernelArg(kernel_input, 0, sizeof(cl_mem), &d_x);
+	checkError(err, "Setting kernel args");
     for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
-		cl_mem *d_input = (l ? &d_h[l-1] : &d_x);
-
-		// Set kernel arguments
-		err  = clSetKernelArg(kernel_lstm[l], 0, sizeof(cl_int), &hidden_size);
-		err |= clSetKernelArg(kernel_lstm[l], 1, sizeof(cl_mem), d_input);
-		err |= clSetKernelArg(kernel_lstm[l], 2, sizeof(cl_mem), &d_h[l]);
-		err |= clSetKernelArg(kernel_lstm[l], 3, sizeof(cl_mem), &d_c[l]);
-		err |= clSetKernelArg(kernel_lstm[l], 4, sizeof(cl_mem), &d_w[l]);
-		err |= clSetKernelArg(kernel_lstm[l], 5, hidden_size*sizeof(cl_float)*5, NULL);
+		int flags = LSTM_FLAG_INIT_STATE;
+		err  = clSetKernelArg(kernel_lstm[l], 0, sizeof(cl_int), &flags);
+		err |= clSetKernelArg(kernel_lstm[l], 1, sizeof(cl_mem), &d_w[l]);
 		checkError(err, "Setting kernel args");
     }
-#endif /* MULTI_LSTM_LAYER */
+	err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_h[NUM_RNN_LAYERS-1]);
+	checkError(err, "Setting kernel args");
 
 #ifdef CALC_PERPLEXITY
     cl_float costs = 0.;
 #endif
     int percent = 0;
     int i;
+
+    //cl_event event_input;
+
     for (i = 0; i < TEST_LOOP_COUNT; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
             return EXIT_FAILURE;
 
-#if 0
-        printf("embedding :");
-        for (int j = 0; j < hidden_size; ++j)
-            printf(" %.8f", h_x[j]);
-        printf("\n");
-#endif
-
-        err = clEnqueueWriteBuffer(commands, d_x, CL_TRUE, 0,
-                    sizeof(cl_float) * hidden_size, h_x, 0, NULL, NULL);
+		cl_event event_x;
+		err = clEnqueueWriteBuffer(commands, d_x, CL_TRUE, 0,
+					sizeof(cl_float) * hidden_size, h_x,
+//					i?1:0, i?&event_input:NULL,
+					0, NULL,
+					&event_x);
         checkError(err, "Writing buffer d_x");
+        err = clWaitForEvents(1, &event_x);
+        checkError(err, "clWaitForEvents");
+
+#if 0
+		err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
+		checkError(err, "Enqueueing kernel");
 
         for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
-#ifdef MULTI_LSTM_LAYER
+        	if (i == 1) {
+				int flags = 0;
+				err  = clSetKernelArg(kernel_lstm[l], 0, sizeof(cl_int), &flags);
+				checkError(err, "Setting kernel args");
+        	}
+#if WORK_GROUP_SIZE > 1
             err = clEnqueueNDRangeKernel(commands, kernel_lstm[l], 3, NULL, global, local,
             							 0, NULL, NULL);
-#else /* MULTI_LSTM_LAYER */
-            cl_mem *d_input = (l ? &d_h[l-1] : &d_x);
-
-            // Set kernel arguments
-            err  = clSetKernelArg(kernel_lstm, 0, sizeof(cl_int), &hidden_size);
-            err |= clSetKernelArg(kernel_lstm, 1, sizeof(cl_mem), d_input);
-            err |= clSetKernelArg(kernel_lstm, 2, sizeof(cl_mem), &d_h[l]);
-            err |= clSetKernelArg(kernel_lstm, 3, sizeof(cl_mem), &d_c[l]);
-            err |= clSetKernelArg(kernel_lstm, 4, sizeof(cl_mem), &d_w[l]);
-            err |= clSetKernelArg(kernel_lstm, 5, hidden_size*sizeof(cl_float)*5, NULL);
-            checkError(err, "Setting kernel args");
-
-            err = clEnqueueNDRangeKernel(commands, kernel_lstm, 3, NULL, global, local,
-            							 0, NULL, NULL);
-#endif /* MULTI_LSTM_LAYER */
-            checkError(err, "Enqueueing kernel");
-
-#if 0
-            err = clWaitForEvents(1, &event);
-            checkError(err, "clWaitForEvents");
-
-            err = clEnqueueReadBuffer(commands, d_h[l], CL_TRUE, 0,
-                                      sizeof(cl_float) * hidden_size, h_h[l],
-                                      0, NULL,NULL);
-            checkError(err, "Reading back d_h");
-
-            err = clEnqueueReadBuffer(commands, d_c[l], CL_TRUE, 0,
-                                      sizeof(cl_float) * hidden_size, h_c[l],
-                                      0, NULL,NULL);
-            checkError(err, "Reading back d_c");
-
-            printf("\nc :");
-            for (int k = 0; k < hidden_size; ++k) {
-                printf(" %.8f", h_c[l][k]);
-            }
-            printf("\n");
-
-            printf("h :");
-            for (int k = 0; k < hidden_size; ++k) {
-                printf(" %.8f", h_h[l][k]);
-            }
-            printf("\n");
+#else
+            err = clEnqueueTask(commands, kernel_lstm[l], 0, NULL, NULL);
 #endif
+            checkError(err, "Enqueueing kernel");
         }
 
+		//cl_event event_output;
+		err = clEnqueueTask(commands, kernel_output, 0, NULL, NULL);
+		checkError(err, "Enqueueing kernel");
+#if 0
+        err = clWaitForEvents(1, &event_output);
+        checkError(err, "clWaitForEvents");
+#endif
+
+		//cl_event event_rbuf;
         int l = NUM_RNN_LAYERS-1;
         err = clEnqueueReadBuffer(commands, d_h[l], CL_TRUE, 0,
                                   sizeof(cl_float) * hidden_size, h_h[l],
                                   0, NULL, NULL);
-
         checkError(err, "Reading back d_h");
+#if 0
+        err = clWaitForEvents(1, &event_rbuf);
+        checkError(err, "clWaitForEvents");
+#endif
+
 
 #ifdef CALC_PERPLEXITY
         softmax(h_h[l], probs);
         costs += cross_entropy(probs, test_words[i+1]);
+#endif
 #endif
 
         if (percent != (i * 100) / TEST_LOOP_COUNT) {
@@ -614,6 +587,18 @@ int main(int argc, char *argv[])
 			fflush(stdout);
         }
     }
+
+#if 1
+    printf("before clFinish\n");
+    err = clFinish(commands);
+    printf("after clFinish\n");
+	checkError(err, "clFinish");
+#else
+    printf("before clFlush\n");
+    err = clFlush(commands);
+    printf("after clFlush\n");
+	checkError(err, "clFlush");
+#endif
 
     rtime = wtime() - rtime;
     printf("\nThe calculation ran in %lf seconds\n", rtime);
@@ -626,20 +611,14 @@ int main(int argc, char *argv[])
     free(h_x);
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
         clReleaseMemObject(d_h[i]);
-        clReleaseMemObject(d_c[i]);
         clReleaseMemObject(d_w[i]);
         free(h_h[i]);
-        free(h_c[i]);
         free(lstm_weights[i]);
     }
 
     clReleaseProgram(program);
-#ifdef MULTI_LSTM_LAYER
     for (int l = 0; l < NUM_RNN_LAYERS; ++l)
         clReleaseKernel(kernel_lstm[l]);
-#else
-    clReleaseKernel(kernel_lstm);
-#endif
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
 
