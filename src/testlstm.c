@@ -347,32 +347,72 @@ static cl_float cross_entropy(const cl_float *probs, int vocab)
 #endif
 }
 
+static cl_float *probs;
+struct output_cb {
+	int 	idx;
+	float	*output;
+};
 #ifdef CALC_PERPLEXITY
 static cl_float costs = 0.;
+
+static pthread_t outputThread;
+static int outputPipeFd[2] = {-1, -1};
+static pthread_mutex_t outputMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  outputCond  = PTHREAD_COND_INITIALIZER;
+static void *cross_entropy_proc(void *arg)
+{
+	struct output_cb *pcb;
+	while (read(outputPipeFd[0], &pcb, sizeof(struct output_cb *)) == sizeof(struct output_cb *) &&
+		   pcb != NULL)
+	{
+		softmax(pcb->output, probs);
+		costs += cross_entropy(probs, test_words[pcb->idx+1]);
+
+		free(pcb->output);
+		free(pcb);
+	}
+	return NULL;
+}
+#endif /* CALC_PERPLEXITY */
+static void processNextOutput(struct output_cb *pcb)
+{
+#ifdef CALC_PERPLEXITY
+	if (outputPipeFd[1] != -1)
+		write(outputPipeFd[1], &pcb, sizeof(struct output_cb *));
+#else
+	free(pcb->output);
+	free(pcb);
 #endif
-static cl_float *probs;
-static int waitingOutputIdx = -1;
-static pthread_mutex_t waitingOutputLock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  waitingOutputCond = PTHREAD_COND_INITIALIZER;
+}
+#ifdef CALC_PERPLEXITY
+static void startCrossEntropyThread(void)
+{
+	if (pipe(outputPipeFd) == -1)
+		perror("pipe");
+	pthread_create(&outputThread, NULL, cross_entropy_proc, NULL);
+}
+static void stopCrossEntropyThread(void)
+{
+#if 0
+	pthread_mutex_lock(&outputMutex);
+	outputThreadMode = -1;
+	pthread_cond_broadcast(&outputCond);
+	pthread_mutex_unlock(&outputMutex);
+#endif
+	processNextOutput(NULL);
+
+	pthread_join(outputThread, NULL);
+
+	close(outputPipeFd[0]);
+	outputPipeFd[0] = -1;
+	close(outputPipeFd[1]);
+	outputPipeFd[1] = -1;
+}
+#endif /* CALC_PERPLEXITY */
 static void outputCB(cl_event event, cl_int event_command_exec_status, void *user_data)
 {
 	if (event_command_exec_status != CL_COMPLETE) return;
-
-	const float *out = (float *) user_data;
-
-	pthread_mutex_lock(&waitingOutputLock);
-
-	assert(waitingOutputIdx >= 0);
-
-#ifdef CALC_PERPLEXITY
-    softmax(out, probs);
-	costs += cross_entropy(probs, test_words[waitingOutputIdx+1]);
-#endif
-
-	waitingOutputIdx = -1;
-	pthread_cond_broadcast(&waitingOutputCond);
-
-	pthread_mutex_unlock(&waitingOutputLock);
+	processNextOutput((struct output_cb *) user_data);
 }
 
 int main(int argc, char *argv[])
@@ -437,8 +477,14 @@ int main(int argc, char *argv[])
     checkError(err, "Creating context");
 
     // Create a command queue
-    cl_command_queue commands = clCreateCommandQueue(context, device_id,
-    		CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, &err);
+    cl_command_queue cq_input = clCreateCommandQueue(context, device_id, 0, &err);
+    checkError(err, "Creating command queue");
+    cl_command_queue cq_lstm[NUM_RNN_LAYERS];
+    for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
+		cq_lstm[i] = clCreateCommandQueue(context, device_id, 0, &err);
+		checkError(err, "Creating command queue");
+    }
+    cl_command_queue cq_output = clCreateCommandQueue(context, device_id, 0, &err);
     checkError(err, "Creating command queue");
 
     // Create the compute program from the binary file
@@ -491,33 +537,35 @@ int main(int argc, char *argv[])
                     sizeof(cl_float) * hidden_size, NULL, &err);
     checkError(err, "Creating buffer d_x");
 
+    cl_mem d_y = clCreateBuffer(context, CL_MEM_READ_ONLY,
+                    sizeof(cl_float) * hidden_size, NULL, &err);
+    checkError(err, "Creating buffer d_y");
+
+#if 0
     cl_float *h_h[NUM_RNN_LAYERS];
     cl_mem d_h[NUM_RNN_LAYERS];
+#endif
     cl_mem d_w[NUM_RNN_LAYERS];
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
-    	cl_event event;
-
+#if 0
         h_h[i] = (cl_float *) calloc(hidden_size, sizeof(cl_float));
         assert(h_h[i] != NULL);
         d_h[i] = clCreateBuffer(context, CL_MEM_READ_WRITE,
                     sizeof(cl_float) * hidden_size, NULL, &err);
         checkError(err, "Creating buffer d_h");
-        err = clEnqueueWriteBuffer(commands, d_h[i], CL_TRUE, 0,
-                    sizeof(cl_float) * hidden_size, h_h[i], 0, NULL, &event);
+        err = clEnqueueWriteBuffer(cq_lstm[i], d_h[i], CL_TRUE, 0,
+                    sizeof(cl_float) * hidden_size, h_h[i], 0, NULL, NULL);
         checkError(err, "Writing buffer d_h");
-        err = clWaitForEvents(1, &event);
-        checkError(err, "clWaitForEvents");
+#endif
 
         d_w[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
                     sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
                     NULL, &err);
         checkError(err, "Creating buffer d_w");
-        err = clEnqueueWriteBuffer(commands, d_w[i], CL_TRUE, 0,
+        err = clEnqueueWriteBuffer(cq_lstm[i], d_w[i], CL_TRUE, 0,
                     sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
-                    lstm_weights[i], 0, NULL, &event);
+                    lstm_weights[i], 0, NULL, NULL);
         checkError(err, "Writing buffer d_w");
-        err = clWaitForEvents(1, &event);
-        checkError(err, "clWaitForEvents");
     }
 
     probs = (cl_float *) malloc(vocab_size * sizeof(cl_float));
@@ -526,6 +574,10 @@ int main(int argc, char *argv[])
 #if WORK_GROUP_SIZE > 1
     size_t global[3] = {WORK_GROUP_SIZE, 1, 1};
     size_t local[3]  = {WORK_GROUP_SIZE, 1, 1};
+#endif
+
+#ifdef CALC_PERPLEXITY
+	startCrossEntropyThread();
 #endif
 
     double rtime = wtime();
@@ -539,27 +591,20 @@ int main(int argc, char *argv[])
 		err |= clSetKernelArg(kernel_lstm[l], 1, sizeof(cl_mem), &d_w[l]);
 		checkError(err, "Setting kernel args");
     }
-	err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_h[NUM_RNN_LAYERS-1]);
+	err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_y);
 	checkError(err, "Setting kernel args");
 
     int percent = 0;
     int i;
-    cl_event event_input;
     for (i = 0; i < TEST_LOOP_COUNT; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
             return EXIT_FAILURE;
 
-        if (i > 0) {
-			err = clWaitForEvents(1, &event_input);
-			checkError(err, "clWaitForEvents");
-        }
-		cl_event event_x;
-		err = clEnqueueWriteBuffer(commands, d_x, CL_TRUE, 0,
+		err = clEnqueueWriteBuffer(cq_input, d_x, CL_TRUE, 0,
 					sizeof(cl_float) * hidden_size, h_x,
-					0, NULL, &event_x);
+					0, NULL, NULL);
         checkError(err, "Writing buffer d_x");
-
-		err = clEnqueueTask(commands, kernel_input, 1, &event_x, &event_input);
+		err = clEnqueueTask(cq_input, kernel_input, 0, NULL, NULL);
 		checkError(err, "Enqueueing kernel");
 
         for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
@@ -569,34 +614,25 @@ int main(int argc, char *argv[])
 				checkError(err, "Setting kernel args");
         	}
 #if WORK_GROUP_SIZE > 1
-            err = clEnqueueNDRangeKernel(commands, kernel_lstm[l], 3, NULL, global, local,
+            err = clEnqueueNDRangeKernel(cq_lstm[l], kernel_lstm[l], 3, NULL, global, local,
             							 0, NULL, NULL);
 #else
-            err = clEnqueueTask(commands, kernel_lstm[l], 0, NULL, NULL);
+            err = clEnqueueTask(cq_lstm[l], kernel_lstm[l], 0, NULL, NULL);
 #endif
             checkError(err, "Enqueueing kernel");
         }
 
-		cl_event event_output;
-		err = clEnqueueTask(commands, kernel_output, 0, NULL, &event_output);
+		err = clEnqueueTask(cq_output, kernel_output, 0, NULL, NULL);
 		checkError(err, "Enqueueing kernel");
-
-		pthread_mutex_lock(&waitingOutputLock);
-		while (waitingOutputIdx != -1) {
-			pthread_cond_wait(&waitingOutputCond, &waitingOutputLock);
-		}
-		waitingOutputIdx = -1;
-		pthread_mutex_unlock(&waitingOutputLock);
+		struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
+		pcb->idx = i;
+		pcb->output = (float *) malloc(sizeof(cl_float) * hidden_size);
 		cl_event event_rbuf;
-        int l = NUM_RNN_LAYERS-1;
-        err = clEnqueueReadBuffer(commands, d_h[l], CL_TRUE, 0,
-                                  sizeof(cl_float) * hidden_size, h_h[l],
-                                  1, &event_output, &event_rbuf);
-        checkError(err, "Reading back d_h");
-		pthread_mutex_lock(&waitingOutputLock);
-		waitingOutputIdx = i;
-		pthread_mutex_unlock(&waitingOutputLock);
-        clSetEventCallback(event_rbuf, CL_COMPLETE, outputCB, h_h[l]);
+        err = clEnqueueReadBuffer(cq_output, d_y, CL_FALSE, 0,
+                                  sizeof(cl_float) * hidden_size, pcb->output,
+								  0, NULL, &event_rbuf);
+        checkError(err, "Reading back d_y");
+        clSetEventCallback(event_rbuf, CL_COMPLETE, outputCB, pcb);
 
         if (percent != (i * 100) / TEST_LOOP_COUNT) {
 			percent = (i * 100) / TEST_LOOP_COUNT;
@@ -606,31 +642,37 @@ int main(int argc, char *argv[])
     }
 
     printf("\nbefore clFinish\n");
-    err = clFinish(commands);
+    err = clFinish(cq_output);
     printf("after clFinish\n");
 	checkError(err, "clFinish");
 
     rtime = wtime() - rtime;
     printf("\nThe calculation ran in %lf seconds\n", rtime);
 #ifdef CALC_PERPLEXITY
+    sleep(1);
+	stopCrossEntropyThread();
     printf("Cross Entropy : %.8f\n", costs);
     printf("Perplexity : %.8f\n", exp(costs / i));
 #endif
 	//printf("in_sum : %f, out_sum : %f\n", in_sum, out_sum);
 
+    clReleaseMemObject(d_y);
     clReleaseMemObject(d_x);
     free(h_x);
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
-        clReleaseMemObject(d_h[i]);
+        //clReleaseMemObject(d_h[i]);
         clReleaseMemObject(d_w[i]);
-        free(h_h[i]);
+        //free(h_h[i]);
         free(lstm_weights[i]);
     }
 
     clReleaseProgram(program);
     for (int l = 0; l < NUM_RNN_LAYERS; ++l)
         clReleaseKernel(kernel_lstm[l]);
-    clReleaseCommandQueue(commands);
+    clReleaseCommandQueue(cq_input);
+    for (int l = 0; l < NUM_RNN_LAYERS; ++l)
+        clReleaseCommandQueue(cq_lstm[l]);
+    clReleaseCommandQueue(cq_output);
     clReleaseContext(context);
 
     free(embed_matrix);
