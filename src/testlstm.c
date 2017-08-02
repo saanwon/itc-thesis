@@ -17,7 +17,11 @@
 #define PATH_MAX        256
 #endif
 
+#if RNN_CELL_SIZE == 200
+#define DEFAULT_DATA_DIR		"../../data.small"
+#else
 #define DEFAULT_DATA_DIR		"../../data.tiny"
+#endif
 
 #define TEST_LOOP_COUNT	(test_words_size-1)
 //#define TEST_LOOP_COUNT	1000
