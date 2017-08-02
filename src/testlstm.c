@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <math.h>
+#include <pthread.h>
 #include <assert.h>
 #include <CL/opencl.h>
 
@@ -21,7 +22,6 @@
 #define TEST_LOOP_COUNT	(test_words_size-1)
 //#define TEST_LOOP_COUNT	1000
 //#define TEST_LOOP_COUNT	2
-#define TEST_LOOP_COUNT	1
 
 #define CALC_PERPLEXITY
 
@@ -347,6 +347,34 @@ static cl_float cross_entropy(const cl_float *probs, int vocab)
 #endif
 }
 
+#ifdef CALC_PERPLEXITY
+static cl_float costs = 0.;
+#endif
+static cl_float *probs;
+static int waitingOutputIdx = -1;
+static pthread_mutex_t waitingOutputLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  waitingOutputCond = PTHREAD_COND_INITIALIZER;
+static void outputCB(cl_event event, cl_int event_command_exec_status, void *user_data)
+{
+	if (event_command_exec_status != CL_COMPLETE) return;
+
+	const float *out = (float *) user_data;
+
+	pthread_mutex_lock(&waitingOutputLock);
+
+	assert(waitingOutputIdx >= 0);
+
+#ifdef CALC_PERPLEXITY
+    softmax(out, probs);
+	costs += cross_entropy(probs, test_words[waitingOutputIdx+1]);
+#endif
+
+	waitingOutputIdx = -1;
+	pthread_cond_broadcast(&waitingOutputCond);
+
+	pthread_mutex_unlock(&waitingOutputLock);
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -492,7 +520,7 @@ int main(int argc, char *argv[])
         checkError(err, "clWaitForEvents");
     }
 
-    cl_float *probs = (cl_float *) malloc(vocab_size * sizeof(cl_float));
+    probs = (cl_float *) malloc(vocab_size * sizeof(cl_float));
     assert(probs != NULL);
 
 #if WORK_GROUP_SIZE > 1
@@ -514,30 +542,24 @@ int main(int argc, char *argv[])
 	err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_h[NUM_RNN_LAYERS-1]);
 	checkError(err, "Setting kernel args");
 
-#ifdef CALC_PERPLEXITY
-    cl_float costs = 0.;
-#endif
     int percent = 0;
     int i;
-
-    //cl_event event_input;
-
+    cl_event event_input;
     for (i = 0; i < TEST_LOOP_COUNT; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
             return EXIT_FAILURE;
 
+        if (i > 0) {
+			err = clWaitForEvents(1, &event_input);
+			checkError(err, "clWaitForEvents");
+        }
 		cl_event event_x;
 		err = clEnqueueWriteBuffer(commands, d_x, CL_TRUE, 0,
 					sizeof(cl_float) * hidden_size, h_x,
-//					i?1:0, i?&event_input:NULL,
-					0, NULL,
-					&event_x);
+					0, NULL, &event_x);
         checkError(err, "Writing buffer d_x");
-        err = clWaitForEvents(1, &event_x);
-        checkError(err, "clWaitForEvents");
 
-#if 0
-		err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
+		err = clEnqueueTask(commands, kernel_input, 1, &event_x, &event_input);
 		checkError(err, "Enqueueing kernel");
 
         for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
@@ -555,31 +577,26 @@ int main(int argc, char *argv[])
             checkError(err, "Enqueueing kernel");
         }
 
-		//cl_event event_output;
-		err = clEnqueueTask(commands, kernel_output, 0, NULL, NULL);
+		cl_event event_output;
+		err = clEnqueueTask(commands, kernel_output, 0, NULL, &event_output);
 		checkError(err, "Enqueueing kernel");
-#if 0
-        err = clWaitForEvents(1, &event_output);
-        checkError(err, "clWaitForEvents");
-#endif
 
-		//cl_event event_rbuf;
+		pthread_mutex_lock(&waitingOutputLock);
+		while (waitingOutputIdx != -1) {
+			pthread_cond_wait(&waitingOutputCond, &waitingOutputLock);
+		}
+		waitingOutputIdx = -1;
+		pthread_mutex_unlock(&waitingOutputLock);
+		cl_event event_rbuf;
         int l = NUM_RNN_LAYERS-1;
         err = clEnqueueReadBuffer(commands, d_h[l], CL_TRUE, 0,
                                   sizeof(cl_float) * hidden_size, h_h[l],
-                                  0, NULL, NULL);
+                                  1, &event_output, &event_rbuf);
         checkError(err, "Reading back d_h");
-#if 0
-        err = clWaitForEvents(1, &event_rbuf);
-        checkError(err, "clWaitForEvents");
-#endif
-
-
-#ifdef CALC_PERPLEXITY
-        softmax(h_h[l], probs);
-        costs += cross_entropy(probs, test_words[i+1]);
-#endif
-#endif
+		pthread_mutex_lock(&waitingOutputLock);
+		waitingOutputIdx = i;
+		pthread_mutex_unlock(&waitingOutputLock);
+        clSetEventCallback(event_rbuf, CL_COMPLETE, outputCB, h_h[l]);
 
         if (percent != (i * 100) / TEST_LOOP_COUNT) {
 			percent = (i * 100) / TEST_LOOP_COUNT;
@@ -588,17 +605,10 @@ int main(int argc, char *argv[])
         }
     }
 
-#if 1
-    printf("before clFinish\n");
+    printf("\nbefore clFinish\n");
     err = clFinish(commands);
     printf("after clFinish\n");
 	checkError(err, "clFinish");
-#else
-    printf("before clFlush\n");
-    err = clFlush(commands);
-    printf("after clFlush\n");
-	checkError(err, "clFlush");
-#endif
 
     rtime = wtime() - rtime;
     printf("\nThe calculation ran in %lf seconds\n", rtime);
@@ -606,6 +616,7 @@ int main(int argc, char *argv[])
     printf("Cross Entropy : %.8f\n", costs);
     printf("Perplexity : %.8f\n", exp(costs / i));
 #endif
+	//printf("in_sum : %f, out_sum : %f\n", in_sum, out_sum);
 
     clReleaseMemObject(d_x);
     free(h_x);
@@ -625,6 +636,7 @@ int main(int argc, char *argv[])
     free(embed_matrix);
     free(softmax_weights);
     free(test_words);
+    free(probs);
 
     printf("================================================================================\n\n\n\n");
 

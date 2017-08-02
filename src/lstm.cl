@@ -93,10 +93,9 @@ void lstm_cell(               int   idx,
  *     (cell n-1)
  */
 void lstm_layer(                 int flags,
+		        __local  const float *l_x, // [cell_size]
                 __global const float *W,   // [cell_size, (2*cell_size+1)*4]
-				__local              *state,
-				pipe float           input,
-				pipe float           output
+				__local              *state
                )
 {
 #if WORK_GROUP_SIZE > 1
@@ -121,7 +120,6 @@ void lstm_layer(                 int flags,
 
     __local float new_h[RNN_CELL_SIZE];
     __local float new_c[RNN_CELL_SIZE];
-    __local float   l_x[RNN_CELL_SIZE];
     __local float *old_h = state;
     __local float *old_c = old_h + RNN_CELL_SIZE;
 
@@ -133,11 +131,6 @@ void lstm_layer(                 int flags,
 		}
     }
 
-	__attribute__((xcl_pipeline_loop))
-	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		read_pipe_block(input, l_x+i);
-	}
-
     //__attribute__((opencl_unroll_hint(RNN_CELL_SIZE)))
     for (i = 0; i < RNN_CELL_SIZE; ++i)
         lstm_cell(i, l_x, old_h, old_c, W, new_h + i, new_c + i);
@@ -145,17 +138,12 @@ void lstm_layer(                 int flags,
     	old_c[i] = new_c[i];
     	old_h[i] = new_h[i];
     }
-
-	__attribute__((xcl_pipeline_loop))
-	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		write_pipe_block(output, new_h+i);
-	}
 #endif /* WORK_GROUP_SIZE */
 }
 
-pipe float pipe_input	__attribute__((xcl_reqd_pipe_depth(32)));
-pipe float pipe_output	__attribute__((xcl_reqd_pipe_depth(32)));
-pipe float pipe_layer01 __attribute__((xcl_reqd_pipe_depth(32)));
+pipe float pipe_input	__attribute__((xcl_reqd_pipe_depth(RNN_OCL_PIPE_DEPTH)));
+pipe float pipe_output	__attribute__((xcl_reqd_pipe_depth(RNN_OCL_PIPE_DEPTH)));
+pipe float pipe_layer01 __attribute__((xcl_reqd_pipe_depth(RNN_OCL_PIPE_DEPTH)));
 
 __attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
 __kernel void lstm_input(__global const float *x)
@@ -182,7 +170,19 @@ __kernel void lstm_layer0(                 int flags,
                           __global const float *W    // [cell_size, (2*cell_size+1)*4]
                          )
 {
-	lstm_layer(flags, W, lstm_state[0], pipe_input, pipe_layer01);
+    __local float   l_x[RNN_CELL_SIZE];
+
+	__attribute__((xcl_pipeline_loop))
+	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+		read_pipe_block(pipe_input, l_x+i);
+	}
+
+	lstm_layer(flags, l_x, W, lstm_state[0]);
+
+	__attribute__((xcl_pipeline_loop))
+	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+		write_pipe_block(pipe_layer01, lstm_state[0]+i);
+	}
 }
 
 __attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
@@ -190,5 +190,17 @@ __kernel void lstm_layer1(               int   flags,
                           __global const float *W    // [cell_size, (2*cell_size+1)*4]
                          )
 {
-	lstm_layer(flags, W, lstm_state[1], pipe_layer01, pipe_output);
+    __local float   l_x[RNN_CELL_SIZE];
+
+	__attribute__((xcl_pipeline_loop))
+	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+		read_pipe_block(pipe_layer01, l_x+i);
+	}
+
+	lstm_layer(flags, l_x, W, lstm_state[1]);
+
+	__attribute__((xcl_pipeline_loop))
+	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+		write_pipe_block(pipe_output, lstm_state[1]+i);
+	}
 }

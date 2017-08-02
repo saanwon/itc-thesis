@@ -6,8 +6,11 @@
 //#define RNN_CELL_SIZE     200
 #define RNN_CELL_SIZE		10
 
+#define RNN_OCL_PIPE_DEPTH	32
+
 //#define WORK_GROUP_SIZE		RNN_CELL_SIZE
 #define WORK_GROUP_SIZE		1
+
 
 #define LSTM_FLAG_INIT_STATE	(1 << 0)
 
