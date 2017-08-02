@@ -3,6 +3,34 @@
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
 
+float lstm_matrix(__local const float *in, __global const float *W)
+{
+	float sum = 0.;
+	__attribute__((xcl_pipeline_loop))
+    lstm_matrix: for (int z = 0; z < RNN_CELL_SIZE; ++z) {
+        sum += in[z] * W[z];
+    }
+    return sum;
+}
+
+float lstm_gate(__local const float *x, __local const float *h, __global const float *Wxh)
+{
+	float sum[2];
+
+	__attribute__((opencl_unroll_hint))
+	lstm_gate: for (int i = 0; i < 2; ++i) {
+		sum[i] = lstm_matrix(i ? h : x, Wxh + i * RNN_CELL_SIZE);
+	}
+	return sum[0] + sum[1] + Wxh[2*RNN_CELL_SIZE];
+}
+
+#define G_FORGET	0
+#define G_INPUT		1
+#define G_OUTPUT	2
+#define G_NEW_J		3
+
+#define IDX_W_X		0
+#define IDX_W_H		1
 void lstm_cell(               int   idx,
                __local  const float *x,   // [cell_size]
                __local        float *h,   // [cell_size]
@@ -12,70 +40,72 @@ void lstm_cell(               int   idx,
 			   __local        float *new_c
               )
 {
-    int z;
-    float It, Jt, Ft, Ot;
-
-#if 0
-    if (idx == 0) {
-        float sum_x = 0., sum_h = 0., sum_c = 0.;
-        for (int i = 0; i < cell_size; ++i) {
-            sum_x += x[i];
-            sum_h += h[i];
-            sum_c += c[i];
-        }
-        float sum_w = 0.;
-        for (int i = 0; i < ((2*cell_size+1)*4) * cell_size; ++i)
-            sum_w += W[i];
-        printf("idx:%3d -> sum_x:%f, sum_h:%f, sum_c:%f, sum_w:%f\n",
-               idx, sum_x, sum_h, sum_c, sum_w);
-    }
-#endif
+    //float It, Jt, Ft, Ot;
+#define It	gates[G_INPUT]
+#define Jt	gates[G_NEW_J]
+#define Ft	gates[G_FORGET]
+#define Ot	gates[G_OUTPUT]
+    float gates[4];
 
     W += idx * ((RNN_CELL_SIZE + RNN_CELL_SIZE + 1) * 4);
 
+    /*
     __global const float *Wix = W;
     __global const float *Wih = Wix + RNN_CELL_SIZE;
-    It = Wih[RNN_CELL_SIZE];
 
     __global const float *Wjx = Wih + RNN_CELL_SIZE + 1;
     __global const float *Wjh = Wjx + RNN_CELL_SIZE;
-    Jt = Wjh[RNN_CELL_SIZE];
 
     __global const float *Wfx = Wjh + RNN_CELL_SIZE + 1;
     __global const float *Wfh = Wfx + RNN_CELL_SIZE;
-    Ft = Wfh[RNN_CELL_SIZE];
 
     __global const float *Wox = Wfh + RNN_CELL_SIZE + 1;
     __global const float *Woh = Wox + RNN_CELL_SIZE;
-    Ot = Woh[RNN_CELL_SIZE];
+    */
+    int Widx[4][2];
 
-    // Forget Gate
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        Ft += x[z] * Wfx[z];
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        Ft += h[z] * Wfh[z];
-    Ft = act_sigm(Ft);
+#define Wix Widx[G_INPUT][IDX_W_X]
+#define Wih Widx[G_INPUT][IDX_W_H]
 
-    // Input Gate
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        It += x[z] * Wix[z];
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        It += h[z] * Wih[z];
-    It = act_sigm(It);
+#define Wjx Widx[G_NEW_J][IDX_W_X]
+#define Wjh Widx[G_NEW_J][IDX_W_H]
 
-    // New Input
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        Jt += x[z] * Wjx[z];
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        Jt += h[z] * Wjh[z];
+#define Wfx Widx[G_FORGET][IDX_W_X]
+#define Wfh Widx[G_FORGET][IDX_W_H]
+
+#define Wox Widx[G_OUTPUT][IDX_W_X]
+#define Woh Widx[G_OUTPUT][IDX_W_H]
+
+    Wix = 0;
+    Wih = Wix + RNN_CELL_SIZE;
+
+    Wjx = Wih + RNN_CELL_SIZE + 1;
+    Wjh = Wjx + RNN_CELL_SIZE;
+
+    Wfx = Wjh + RNN_CELL_SIZE + 1;
+    Wfh = Wfx + RNN_CELL_SIZE;
+
+    Wox = Wfh + RNN_CELL_SIZE + 1;
+    Woh = Wox + RNN_CELL_SIZE;
+
+
+    //Ft = lstm_gate(x, h, Wfx, Wfh);
+    //It = lstm_gate(x, h, Wix, Wih);
+    //Ot = lstm_gate(x, h, Wox, Woh);
+    //Jt = lstm_gate(x, h, Wjx, Wjh);
+	__attribute__((opencl_unroll_hint))
+    lstm_cell_matrix: for (int i = 0; i < 4; ++i) {
+		gates[i] = lstm_gate(x, h, W + Widx[i][IDX_W_X]);
+    }
+
+    //Ft = act_sigm(Ft);
+    //It = act_sigm(It);
+    //Ot = act_sigm(Ot);
+	__attribute__((opencl_unroll_hint))
+    lstm_cell_nonl: for (int i = 0; i < 3; ++i) {
+		gates[i] = act_sigm(gates[i]);
+    }
     Jt = act_tanh(Jt);
-
-    // Output Gate
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        Ot += x[z] * Wox[z];
-    for (z = 0; z < RNN_CELL_SIZE; ++z)
-        Ot += h[z] * Woh[z];
-    Ot = act_sigm(Ot);
 
     // New Cell Status
     *new_c = Ft * c[idx] + It * Jt;
@@ -125,16 +155,20 @@ void lstm_layer(                 int flags,
 
     if (flags & LSTM_FLAG_INIT_STATE) {
 		__attribute__((xcl_pipeline_loop))
-		for (i = 0; i < RNN_CELL_SIZE; ++i) {
+		lstm_layer_init: for (i = 0; i < RNN_CELL_SIZE; ++i) {
 			old_c[i] = 0.;
 			old_h[i] = 0.;
 		}
     }
 
     //__attribute__((opencl_unroll_hint(RNN_CELL_SIZE)))
-    for (i = 0; i < RNN_CELL_SIZE; ++i)
+	__attribute__((xcl_pipeline_loop))
+    lstm_layer_cell: for (i = 0; i < RNN_CELL_SIZE; ++i) {
         lstm_cell(i, l_x, old_h, old_c, W, new_h + i, new_c + i);
-    for (i = 0; i < RNN_CELL_SIZE; ++i) {
+    }
+
+	__attribute__((xcl_pipeline_loop))
+    lstm_layer_update: for (i = 0; i < RNN_CELL_SIZE; ++i) {
     	old_c[i] = new_c[i];
     	old_h[i] = new_h[i];
     }
@@ -173,14 +207,14 @@ __kernel void lstm_layer0(                 int flags,
     __local float   l_x[RNN_CELL_SIZE];
 
 	__attribute__((xcl_pipeline_loop))
-	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+	lstm_layer0_in: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
 		read_pipe_block(pipe_input, l_x+i);
 	}
 
 	lstm_layer(flags, l_x, W, lstm_state[0]);
 
 	__attribute__((xcl_pipeline_loop))
-	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+	lstm_layer0_out: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
 		write_pipe_block(pipe_layer01, lstm_state[0]+i);
 	}
 }
@@ -193,14 +227,14 @@ __kernel void lstm_layer1(               int   flags,
     __local float   l_x[RNN_CELL_SIZE];
 
 	__attribute__((xcl_pipeline_loop))
-	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+	lstm_layer1_in: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
 		read_pipe_block(pipe_layer01, l_x+i);
 	}
 
 	lstm_layer(flags, l_x, W, lstm_state[1]);
 
 	__attribute__((xcl_pipeline_loop))
-	for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+	lstm_layer1_out: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
 		write_pipe_block(pipe_output, lstm_state[1]+i);
 	}
 }

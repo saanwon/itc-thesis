@@ -28,6 +28,7 @@
 //#define TEST_LOOP_COUNT	2
 
 #define CALC_PERPLEXITY
+//#define NO_KERNEL_CALL
 
 #include "err_code.h"
 extern int output_device_info(cl_device_id device_id);
@@ -608,6 +609,7 @@ int main(int argc, char *argv[])
 					sizeof(cl_float) * hidden_size, h_x,
 					0, NULL, NULL);
         checkError(err, "Writing buffer d_x");
+#ifndef NO_KERNEL_CALL
 		err = clEnqueueTask(cq_input, kernel_input, 0, NULL, NULL);
 		checkError(err, "Enqueueing kernel");
 
@@ -628,6 +630,7 @@ int main(int argc, char *argv[])
 
 		err = clEnqueueTask(cq_output, kernel_output, 0, NULL, NULL);
 		checkError(err, "Enqueueing kernel");
+#endif /* ! NO_KERNEL_CALL */
 		struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
 		pcb->idx = i;
 		pcb->output = (float *) malloc(sizeof(cl_float) * hidden_size);
