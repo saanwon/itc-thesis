@@ -6,7 +6,7 @@
 float lstm_matrix(__local const float *in, __global const float *W)
 {
     float sum = 0.;
-    //__attribute__((xcl_pipeline_loop))
+    __attribute__((xcl_pipeline_loop))
     lstm_matrix: for (int z = 0; z < RNN_CELL_SIZE; ++z) {
         sum += in[z] * W[z];
     }
