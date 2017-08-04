@@ -5,8 +5,8 @@
 
 float lstm_matrix(__local const float *in, __global const float *W)
 {
-	float sum = 0.;
-	__attribute__((xcl_pipeline_loop))
+    float sum = 0.;
+    //__attribute__((xcl_pipeline_loop))
     lstm_matrix: for (int z = 0; z < RNN_CELL_SIZE; ++z) {
         sum += in[z] * W[z];
     }
@@ -15,13 +15,13 @@ float lstm_matrix(__local const float *in, __global const float *W)
 
 float lstm_gate(__local const float *x, __local const float *h, __global const float *Wxh)
 {
-	float sum[2];
+    float sum[2];
 
-	__attribute__((opencl_unroll_hint))
-	lstm_gate: for (int i = 0; i < 2; ++i) {
-		sum[i] = lstm_matrix(i ? h : x, Wxh + i * RNN_CELL_SIZE);
-	}
-	return sum[0] + sum[1] + Wxh[2*RNN_CELL_SIZE];
+    //__attribute__((opencl_unroll_hint))
+    lstm_gate: for (int i = 0; i < 2; ++i) {
+        sum[i] = lstm_matrix(i ? h : x, Wxh + i * RNN_CELL_SIZE);
+    }
+    return sum[0] + sum[1] + Wxh[2*RNN_CELL_SIZE];
 }
 
 #define G_FORGET	0
@@ -93,17 +93,17 @@ void lstm_cell(               int   idx,
     //It = lstm_gate(x, h, Wix, Wih);
     //Ot = lstm_gate(x, h, Wox, Woh);
     //Jt = lstm_gate(x, h, Wjx, Wjh);
-	__attribute__((opencl_unroll_hint))
+    //__attribute__((opencl_unroll_hint))
     lstm_cell_matrix: for (int i = 0; i < 4; ++i) {
-		gates[i] = lstm_gate(x, h, W + Widx[i][IDX_W_X]);
+        gates[i] = lstm_gate(x, h, W + Widx[i][IDX_W_X]);
     }
 
     //Ft = act_sigm(Ft);
     //It = act_sigm(It);
     //Ot = act_sigm(Ot);
-	__attribute__((opencl_unroll_hint))
+    //__attribute__((opencl_unroll_hint))
     lstm_cell_nonl: for (int i = 0; i < 3; ++i) {
-		gates[i] = act_sigm(gates[i]);
+        gates[i] = act_sigm(gates[i]);
     }
     Jt = act_tanh(Jt);
 
@@ -129,9 +129,9 @@ void lstm_layer(                 int flags,
                )
 {
 #if WORK_GROUP_SIZE > 1
-	int idx = get_global_id(0);
+    int idx = get_global_id(0);
 
-	lstm_cell(idx, cell_size, x, h, c, W, new_h + idx, new_c + idx);
+    lstm_cell(idx, cell_size, x, h, c, W, new_h + idx, new_c + idx);
 
     /*
      * Update Internal Cell status
@@ -139,10 +139,10 @@ void lstm_layer(                 int flags,
     barrier(CLK_GLOBAL_MEM_FENCE);
 
     if (idx == (cell_size-1)) {
-		for (int i = 0; i < cell_size; ++i) {
-			c[i] = new_c[i];
-			h[i] = new_h[i];
-		}
+        for (int i = 0; i < cell_size; ++i) {
+            c[i] = new_c[i];
+            h[i] = new_h[i];
+        }
     }
 #else /* WORK_GROUP_SIZE */
     int i;
@@ -154,20 +154,20 @@ void lstm_layer(                 int flags,
     __local float *old_c = old_h + RNN_CELL_SIZE;
 
     if (flags & LSTM_FLAG_INIT_STATE) {
-		__attribute__((xcl_pipeline_loop))
-		lstm_layer_init: for (i = 0; i < RNN_CELL_SIZE; ++i) {
-			old_c[i] = 0.;
-			old_h[i] = 0.;
-		}
+        //__attribute__((xcl_pipeline_loop))
+        lstm_layer_init: for (i = 0; i < RNN_CELL_SIZE; ++i) {
+            old_c[i] = 0.;
+            old_h[i] = 0.;
+        }
     }
 
     //__attribute__((opencl_unroll_hint(RNN_CELL_SIZE)))
-	__attribute__((xcl_pipeline_loop))
+    //__attribute__((xcl_pipeline_loop))
     lstm_layer_cell: for (i = 0; i < RNN_CELL_SIZE; ++i) {
         lstm_cell(i, l_x, old_h, old_c, W, new_h + i, new_c + i);
     }
 
-	__attribute__((xcl_pipeline_loop))
+    //__attribute__((xcl_pipeline_loop))
     lstm_layer_update: for (i = 0; i < RNN_CELL_SIZE; ++i) {
     	old_c[i] = new_c[i];
     	old_h[i] = new_h[i];
@@ -182,19 +182,19 @@ pipe float pipe_layer01 __attribute__((xcl_reqd_pipe_depth(RNN_OCL_PIPE_DEPTH)))
 __attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
 __kernel void lstm_input(__global const float *x)
 {
-	__attribute__((xcl_pipeline_loop))
-	lstm_input: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		write_pipe_block(pipe_input, x+i);
-	}
+    //__attribute__((xcl_pipeline_loop))
+    lstm_input: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+        write_pipe_block(pipe_input, x+i);
+    }
 }
 
 __attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
 __kernel void lstm_output(__global float *h)
 {
-	__attribute__((xcl_pipeline_loop))
-	lstm_output: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		read_pipe_block(pipe_output, h+i);
-	}
+    //__attribute__((xcl_pipeline_loop))
+    lstm_output: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+        read_pipe_block(pipe_output, h+i);
+    }
 }
 
 __local float lstm_state[NUM_RNN_LAYERS][RNN_CELL_SIZE * 2];
@@ -206,17 +206,17 @@ __kernel void lstm_layer0(                 int flags,
 {
     __local float   l_x[RNN_CELL_SIZE];
 
-	__attribute__((xcl_pipeline_loop))
-	lstm_layer0_in: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		read_pipe_block(pipe_input, l_x+i);
-	}
+    //__attribute__((xcl_pipeline_loop))
+    lstm_layer0_in: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+        read_pipe_block(pipe_input, l_x+i);
+    }
 
-	lstm_layer(flags, l_x, W, lstm_state[0]);
+    lstm_layer(flags, l_x, W, lstm_state[0]);
 
-	__attribute__((xcl_pipeline_loop))
-	lstm_layer0_out: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		write_pipe_block(pipe_layer01, lstm_state[0]+i);
-	}
+    //__attribute__((xcl_pipeline_loop))
+    lstm_layer0_out: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+        write_pipe_block(pipe_layer01, lstm_state[0]+i);
+    }
 }
 
 __attribute__ ((reqd_work_group_size(WORK_GROUP_SIZE, 1, 1)))
@@ -226,15 +226,15 @@ __kernel void lstm_layer1(               int   flags,
 {
     __local float   l_x[RNN_CELL_SIZE];
 
-	__attribute__((xcl_pipeline_loop))
-	lstm_layer1_in: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		read_pipe_block(pipe_layer01, l_x+i);
-	}
+    //__attribute__((xcl_pipeline_loop))
+    lstm_layer1_in: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+        read_pipe_block(pipe_layer01, l_x+i);
+    }
 
-	lstm_layer(flags, l_x, W, lstm_state[1]);
+    lstm_layer(flags, l_x, W, lstm_state[1]);
 
-	__attribute__((xcl_pipeline_loop))
-	lstm_layer1_out: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
-		write_pipe_block(pipe_output, lstm_state[1]+i);
-	}
+    //__attribute__((xcl_pipeline_loop))
+    lstm_layer1_out: for (int i = 0; i < RNN_CELL_SIZE; ++i) {
+        write_pipe_block(pipe_output, lstm_state[1]+i);
+    }
 }
