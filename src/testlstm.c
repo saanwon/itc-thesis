@@ -13,6 +13,11 @@
 
 #include "kerneldefs.h"
 
+#define NUM_COMPUTE_UNITS       4
+
+#define NUM_RNN_LAYERS  2
+
+
 #ifndef PATH_MAX
 #define PATH_MAX        256
 #endif
@@ -383,10 +388,6 @@ static cl_float costs = 0.;
 
 static pthread_t outputThread;
 static int outputPipeFd[2] = {-1, -1};
-#if 0
-static pthread_mutex_t outputMutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  outputCond  = PTHREAD_COND_INITIALIZER;
-#endif
 static void *cross_entropy_proc(void *arg)
 {
     struct output_cb *pcb;
@@ -421,12 +422,6 @@ static void startCrossEntropyThread(void)
 }
 static void stopCrossEntropyThread(void)
 {
-#if 0
-    pthread_mutex_lock(&outputMutex);
-    outputThreadMode = -1;
-    pthread_cond_broadcast(&outputCond);
-    pthread_mutex_unlock(&outputMutex);
-#endif
     processNextOutput(NULL);
 
     pthread_join(outputThread, NULL);
@@ -437,11 +432,13 @@ static void stopCrossEntropyThread(void)
     outputPipeFd[1] = -1;
 }
 #endif /* CALC_PERPLEXITY */
+#if 0
 static void outputCB(cl_event event, cl_int event_command_exec_status, void *user_data)
 {
     if (event_command_exec_status != CL_COMPLETE) return;
     processNextOutput((struct output_cb *) user_data);
 }
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -505,19 +502,8 @@ int main(int argc, char *argv[])
     checkError(err, "Creating context");
 
     // Create a command queue
-    cl_command_queue cq_input = clCreateCommandQueue(context, device_id, 0, &err);
+    cl_command_queue commands = clCreateCommandQueue(context, device_id, 0, &err);
     checkError(err, "Creating command queue");
-#ifdef USE_XCL_DATAFLOW
-#define cq_output       cq_input
-#else /* USE_XCL_DATAFLOW */
-    cl_command_queue cq_lstm[NUM_RNN_LAYERS];
-    for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
-        cq_lstm[i] = clCreateCommandQueue(context, device_id, 0, &err);
-        checkError(err, "Creating command queue");
-    }
-    cl_command_queue cq_output = clCreateCommandQueue(context, device_id, 0, &err);
-    checkError(err, "Creating command queue");
-#endif /* USE_XCL_DATAFLOW */
 
     // Create the compute program from the binary file
     printf("Loading %s\n", argv[1]);
@@ -549,24 +535,14 @@ int main(int argc, char *argv[])
     }
 
     // Create the compute kernel from the program
-#ifdef USE_XCL_DATAFLOW
-    cl_kernel kernel_input = clCreateKernel(program, "lstm_network", &err);
-    checkError(err, "Creating lstm kernel");
-#else /* USE_XCL_DATAFLOW */
     cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
     checkError(err, "Creating lstm kernel");
 
-    cl_kernel kernel_lstm[NUM_RNN_LAYERS];
-    for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
-        char kernel_name[64];
-        sprintf(kernel_name, "lstm_layer%d", l);
-        kernel_lstm[l] = clCreateKernel(program, kernel_name, &err);
-        checkError(err, "Creating lstm kernel");
-    }
+    cl_kernel kernel_cell = clCreateKernel(program, "lstm_cell", &err);
+    checkError(err, "Creating lstm kernel");
 
     cl_kernel kernel_output = clCreateKernel(program, "lstm_output", &err);
     checkError(err, "Creating lstm kernel");
-#endif /* USE_XCL_DATAFLOW */
 
     cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
     assert(h_x != NULL);
@@ -574,33 +550,18 @@ int main(int argc, char *argv[])
                     sizeof(cl_float) * hidden_size, NULL, &err);
     checkError(err, "Creating buffer d_x");
 
-    cl_mem d_y = clCreateBuffer(context, CL_MEM_READ_ONLY,
-                    sizeof(cl_float) * hidden_size, NULL, &err);
-    checkError(err, "Creating buffer d_y");
-
-#ifdef USE_XCL_DATAFLOW
-    cl_mem d_w;
-    d_w = clCreateBuffer(context, CL_MEM_READ_ONLY,
-                sizeof(cl_float) * LSTM_PARAM_SIZE * NUM_RNN_LAYERS,
-                NULL, &err);
-    checkError(err, "Creating buffer d_w");
-    err = clEnqueueWriteBuffer(cq_input, d_w, CL_TRUE, 0,
-                sizeof(cl_float) * LSTM_PARAM_SIZE * NUM_RNN_LAYERS,
-                lstm_weights, 0, NULL, NULL);
-    checkError(err, "Writing buffer d_w");
-#else /* USE_XCL_DATAFLOW */
+    cl_mem d_s[NUM_RNN_LAYERS];
     cl_mem d_w[NUM_RNN_LAYERS];
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
-        d_w[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
+        d_s[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
+                        sizeof(cl_float) * hidden_size * 2, NULL, &err);
+        checkError(err, "Creating buffer d_s");
+
+        d_w[i] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                     sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
-                    NULL, &err);
+                    lstm_weights[i], &err);
         checkError(err, "Creating buffer d_w");
-        err = clEnqueueWriteBuffer(cq_input, d_w[i], CL_TRUE, 0,
-                    sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
-                    lstm_weights[i], 0, NULL, NULL);
-        checkError(err, "Writing buffer d_w");
     }
-#endif /* USE_XCL_DATAFLOW */
 
     probs = (cl_float *) malloc(vocab_size * sizeof(cl_float));
     assert(probs != NULL);
@@ -609,89 +570,68 @@ int main(int argc, char *argv[])
     startCrossEntropyThread();
 #endif
 
+    size_t global_work_size[3] = {NUM_COMPUTE_UNITS, 1, 1};
+    size_t local_work_size[3] = {1, 1, 1};
+    int percent = 0;
+
     double rtime = wtime();
 
-    // Set kernel arguments
-#ifdef USE_XCL_DATAFLOW
-    int argidx = 0;
-    int flags = LSTM_FLAG_INIT_STATE;
-    err  = clSetKernelArg(kernel_input, argidx++, sizeof(cl_int), &flags);
-#if 0
-    for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
-        err |= clSetKernelArg(kernel_input, argidx++, sizeof(cl_mem), &d_w[l]);
-    }
-#else
-    err |= clSetKernelArg(kernel_input, argidx++, sizeof(cl_mem), &d_w);
-#endif
-    err |= clSetKernelArg(kernel_input, argidx++, sizeof(cl_mem), &d_x);
-    err |= clSetKernelArg(kernel_input, argidx++, sizeof(cl_mem), &d_y);
-#else /* USE_XCL_DATAFLOW */
-    err = clSetKernelArg(kernel_input, 0, sizeof(cl_mem), &d_x);
-    checkError(err, "Setting kernel args");
-    for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
-        int flags = LSTM_FLAG_INIT_STATE;
-        err  = clSetKernelArg(kernel_lstm[l], 0, sizeof(cl_int), &flags);
-        err |= clSetKernelArg(kernel_lstm[l], 1, sizeof(cl_mem), &d_w[l]);
-        checkError(err, "Setting kernel args");
-    }
-    err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_y);
-#endif /* USE_XCL_DATAFLOW */
-    checkError(err, "Setting kernel args");
-
-    int percent = 0;
     for (int i = 0; i < TEST_LOOP_COUNT; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
             return EXIT_FAILURE;
 
-        err = clEnqueueWriteBuffer(cq_input, d_x, CL_TRUE, 0,
+        err = clEnqueueWriteBuffer(commands, d_x, CL_TRUE, 0,
                                 sizeof(cl_float) * hidden_size, h_x,
                                 0, NULL, NULL);
         checkError(err, "Writing buffer d_x");
-#ifndef NO_KERNEL_CALL
-#ifdef USE_XCL_DATAFLOW
-        if (i == 1) {
-            flags = 0;
+
+        int flags = 0;
+        if (i == 0)
+            flags = LSTM_FLAG_INIT_STATE;
+        for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
             err  = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &flags);
-            checkError(err, "Setting kernel args");
-        }
-#endif
-        err = clEnqueueTask(cq_input, kernel_input, 0, NULL, NULL);
-        checkError(err, "Enqueueing kernel");
+            err |= clSetKernelArg(kernel_input, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
+            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), &d_s[j]);
+            checkError(err, "Setting input kernel args");
+            err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
+            checkError(err, "Enqueueing input kernel");
 
-#ifndef USE_XCL_DATAFLOW
-        for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
-            if (i == 1) {
-                int flags = 0;
-                err  = clSetKernelArg(kernel_lstm[l], 0, sizeof(cl_int), &flags);
-                checkError(err, "Setting kernel args");
-            }
-            err = clEnqueueTask(cq_lstm[l], kernel_lstm[l], 0, NULL, NULL);
-            checkError(err, "Enqueueing kernel");
+            err = clSetKernelArg(kernel_cell, 0, sizeof(cl_mem), &d_w[j]);
+            checkError(err, "Setting cell kernel args");
+            err = clEnqueueNDRangeKernel(commands, kernel_cell,
+                    1, NULL, global_work_size, local_work_size,
+                    0, NULL, NULL);
+            checkError(err, "Enqueueing cell kernel");
+
+            err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_s[j]);
+            checkError(err, "Setting output kernel args");
+            err = clEnqueueTask(commands, kernel_output, 0, NULL, NULL);
+            checkError(err, "Enqueueing output kernel");
         }
 
-        err = clEnqueueTask(cq_output, kernel_output, 0, NULL, NULL);
-        checkError(err, "Enqueueing kernel");
-#endif /* ! USE_XCL_DATAFLOW */
-#endif /* ! NO_KERNEL_CALL */
         struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
         pcb->idx = i;
         pcb->output = (float *) malloc(sizeof(cl_float) * hidden_size);
-        cl_event event_rbuf;
-        err = clEnqueueReadBuffer(cq_output, d_y, CL_FALSE, 0,
+        //cl_event event_rbuf;
+        err = clEnqueueReadBuffer(commands, d_s[NUM_RNN_LAYERS-1], CL_TRUE, 0,
                                   sizeof(cl_float) * hidden_size, pcb->output,
-				  0, NULL, &event_rbuf);
+				  0, NULL, NULL/*&event_rbuf*/);
         checkError(err, "Reading back d_y");
+#if 0
         clSetEventCallback(event_rbuf, CL_COMPLETE, outputCB, pcb);
+#else
+        processNextOutput(pcb);
+#endif
 
-        if (percent != (i * 100) / TEST_LOOP_COUNT) {
-            percent = (i * 100) / TEST_LOOP_COUNT;
+        if (percent != ((i+1) * 100) / TEST_LOOP_COUNT) {
+            percent = ((i+1) * 100) / TEST_LOOP_COUNT;
             printf("\r%d%%", percent);
             fflush(stdout);
         }
     }
 
     printf("\nbefore clFinish\n");
-    err = clFinish(cq_output);
+    err = clFinish(commands);
     printf("after clFinish\n");
     checkError(err, "clFinish");
 
@@ -703,9 +643,8 @@ int main(int argc, char *argv[])
     printf("Cross Entropy : %.8f\n", costs);
     printf("Perplexity : %.8f\n", exp(costs / TEST_LOOP_COUNT));
 #endif
-	//printf("in_sum : %f, out_sum : %f\n", in_sum, out_sum);
+    //printf("in_sum : %f, out_sum : %f\n", in_sum, out_sum);
 
-    clReleaseMemObject(d_y);
     clReleaseMemObject(d_x);
     free(h_x);
 #ifdef USE_XCL_DATAFLOW
@@ -713,6 +652,7 @@ int main(int argc, char *argv[])
     free(lstm_weights);
 #else /* USE_XCL_DATAFLOW */
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
+        clReleaseMemObject(d_s[i]);
         clReleaseMemObject(d_w[i]);
         free(lstm_weights[i]);
     }
@@ -720,15 +660,9 @@ int main(int argc, char *argv[])
 
     clReleaseProgram(program);
     clReleaseKernel(kernel_input);
-    clReleaseCommandQueue(cq_input);
-#ifndef USE_XCL_DATAFLOW
-    for (int l = 0; l < NUM_RNN_LAYERS; ++l) {
-        clReleaseKernel(kernel_lstm[l]);
-        clReleaseCommandQueue(cq_lstm[l]);
-    }
+    clReleaseKernel(kernel_cell);
     clReleaseKernel(kernel_output);
-    clReleaseCommandQueue(cq_output);
-#endif /* ! USE_XCL_DATAFLOW */
+    clReleaseCommandQueue(commands);
     clReleaseContext(context);
 
     free(embed_matrix);
