@@ -13,7 +13,8 @@
 
 #include "kerneldefs.h"
 
-#define NUM_COMPUTE_UNITS       4
+//#define NUM_COMPUTE_UNITS       4
+#define NUM_COMPUTE_UNITS       2
 
 #define NUM_RNN_LAYERS  2
 
@@ -181,7 +182,11 @@ static cl_float *load_lstm_params(const char *fname)
         for (int z = 0; z < 4; z++) {
             int s = z*hidden_size;
             for (int c = 0; c < (hidden_size*2+1); ++c)
+#if 0
                 *w++ = params[s + r + hidden_size*4 * c];
+#else
+                w[(r*(hidden_size*2+1)+c)*4+z] = params[s + r + hidden_size*4 * c];
+#endif
         }
     }
 
