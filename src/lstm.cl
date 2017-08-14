@@ -69,12 +69,12 @@ __kernel void lstm_cell(__global const float *W)        // [cell_size, (2*cell_s
             wloc[i] = Wl[i];
         }
 
-        //__attribute__((xcl_pipeline_loop))
+        __attribute__((xcl_pipeline_loop))
         loop_gates_init: for (int gi = 0, i = 2*RNN_CELL_SIZE*4; gi < 4; gi++, i++) {
             gates[gi] = Wl[i];
         }
 
-        //__attribute__((xcl_pipeline_loop))
+        __attribute__((xcl_pipeline_loop))
         loop_gates_sum: for (int i = 0, j = 0; i < 2*RNN_CELL_SIZE; i++) {
             __attribute__((opencl_unroll_hint))
             loop_gates_item: for (int gi = 0; gi < 4; gi++, j++) {
