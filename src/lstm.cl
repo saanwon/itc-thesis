@@ -1,5 +1,7 @@
 #include "kerneldefs.h"
 
+#define LOOP_CELL_UNROLL_HINT   1
+
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
 
@@ -48,60 +50,56 @@ __kernel void lstm_input(               int   flags,
 }
 
 #define GATE_PARAM_SIZE         (2*RNN_CELL_SIZE+1)
-__attribute__ ((reqd_work_group_size(1, 1, 1)))
-__kernel void lstm_cell(__global const float *W)        // [cell_size, (2*cell_size+1)*4]
-
+static void lstm_cell(int ci, __global const float *W)
 {
-    int global_id       = get_global_id(0);
-    int global_threads  = get_global_size(0);
-
-    int start_ci = global_id       * RNN_CELL_SIZE / global_threads;
-    int end_ci   = (global_id + 1) * RNN_CELL_SIZE / global_threads;
+    __global const float *Wl = W + ci * (GATE_PARAM_SIZE * 4);
 
     float gates[4]; //__attribute__((xcl_array_partition(complete,1)));
     float wloc[2*RNN_CELL_SIZE * 4] __attribute__((xcl_array_partition(cyclic,4,1)));
 
-    loop_cell: for (int ci = start_ci; ci < end_ci; ci++) {
-        __global const float *Wl = W + ci * (GATE_PARAM_SIZE * 4);
+    __attribute__((xcl_pipeline_loop))
+    loop_wloc_init: for (int i = 0; i < 2*RNN_CELL_SIZE * 4; i++) {
+        wloc[i] = Wl[i];
+    }
 
-        __attribute__((xcl_pipeline_loop))
-        loop_wloc_init: for (int i = 0; i < 2*RNN_CELL_SIZE * 4; i++) {
-            wloc[i] = Wl[i];
-        }
+    __attribute__((xcl_pipeline_loop))
+    loop_gates_init: for (int gi = 0, i = 2*RNN_CELL_SIZE*4; gi < 4; gi++, i++) {
+        gates[gi] = Wl[i];
+    }
 
-        __attribute__((xcl_pipeline_loop))
-        loop_gates_init: for (int gi = 0, i = 2*RNN_CELL_SIZE*4; gi < 4; gi++, i++) {
-            gates[gi] = Wl[i];
+    __attribute__((xcl_pipeline_loop))
+    loop_gates_sum: for (int i = 0, j = 0; i < 2*RNN_CELL_SIZE; i++) {
+        __attribute__((opencl_unroll_hint))
+        loop_gates_item: for (int gi = 0; gi < 4; gi++, j++) {
+            gates[gi] += lstm_x_h[i] * wloc[j];
         }
-
-        __attribute__((xcl_pipeline_loop))
-        loop_gates_sum: for (int i = 0, j = 0; i < 2*RNN_CELL_SIZE; i++) {
-            __attribute__((opencl_unroll_hint))
-            loop_gates_item: for (int gi = 0; gi < 4; gi++, j++) {
-                gates[gi] += lstm_x_h[i] * wloc[j];
-            }
-        }
+    }
 
 #define It      gates[0]
 #define Jt      gates[1]
 #define Ft      gates[2]
 #define Ot      gates[3]
 
-        It = act_sigm(It);
-        Jt = act_tanh(Jt);
-        Ft = act_sigm(Ft);
-        Ot = act_sigm(Ot);
+    It = act_sigm(It);
+    Jt = act_tanh(Jt);
+    Ft = act_sigm(Ft);
+    Ot = act_sigm(Ot);
 
-        // New Cell Status
-        lstm_new_c[ci] = Ft * lstm_old_c[ci] + It * Jt;
-        // New Hidden Status
-        lstm_new_h[ci] = Ot * act_tanh(lstm_new_c[ci]);
-    }
+    // New Cell Status
+    lstm_new_c[ci] = Ft * lstm_old_c[ci] + It * Jt;
+    // New Hidden Status
+    lstm_new_h[ci] = Ot * act_tanh(lstm_new_c[ci]);
 }
 
 __attribute__ ((reqd_work_group_size(1, 1, 1)))
-__kernel void lstm_output(__global float *state)
+__kernel void lstm_layer(__global const float *W,        // [cell_size, (2*cell_size+1)*4]
+                         __global       float *state)    // cell state
 {
+    __attribute__((opencl_unroll_hint(LOOP_CELL_UNROLL_HINT)))
+    loop_cell: for (int ci = 0; ci < RNN_CELL_SIZE; ci++) {
+        lstm_cell(ci, W);
+    }
+
     int j = 0;
     __attribute__((xcl_pipeline_loop))
     for (int i = 0; i < RNN_CELL_SIZE; ++i, ++j) {

@@ -13,9 +13,6 @@
 
 #include "kerneldefs.h"
 
-//#define NUM_COMPUTE_UNITS       4
-#define NUM_COMPUTE_UNITS       2
-
 #define NUM_RNN_LAYERS  2
 
 
@@ -543,10 +540,7 @@ int main(int argc, char *argv[])
     cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
     checkError(err, "Creating lstm kernel");
 
-    cl_kernel kernel_cell = clCreateKernel(program, "lstm_cell", &err);
-    checkError(err, "Creating lstm kernel");
-
-    cl_kernel kernel_output = clCreateKernel(program, "lstm_output", &err);
+    cl_kernel kernel_layer = clCreateKernel(program, "lstm_layer", &err);
     checkError(err, "Creating lstm kernel");
 
     cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
@@ -575,8 +569,6 @@ int main(int argc, char *argv[])
     startCrossEntropyThread();
 #endif
 
-    size_t global_work_size[3] = {NUM_COMPUTE_UNITS, 1, 1};
-    size_t local_work_size[3] = {1, 1, 1};
     int percent = 0;
 
     double rtime = wtime();
@@ -601,17 +593,11 @@ int main(int argc, char *argv[])
             err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
             checkError(err, "Enqueueing input kernel");
 
-            err = clSetKernelArg(kernel_cell, 0, sizeof(cl_mem), &d_w[j]);
-            checkError(err, "Setting cell kernel args");
-            err = clEnqueueNDRangeKernel(commands, kernel_cell,
-                    1, NULL, global_work_size, local_work_size,
-                    0, NULL, NULL);
-            checkError(err, "Enqueueing cell kernel");
-
-            err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_s[j]);
-            checkError(err, "Setting output kernel args");
-            err = clEnqueueTask(commands, kernel_output, 0, NULL, NULL);
-            checkError(err, "Enqueueing output kernel");
+            err  = clSetKernelArg(kernel_layer, 0, sizeof(cl_mem), &d_w[j]);
+            err |= clSetKernelArg(kernel_layer, 1, sizeof(cl_mem), &d_s[j]);
+            checkError(err, "Setting layer kernel args");
+            err = clEnqueueTask(commands, kernel_layer, 0, NULL, NULL);
+            checkError(err, "Enqueueing layer kernel");
         }
 
         struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
@@ -665,8 +651,7 @@ int main(int argc, char *argv[])
 
     clReleaseProgram(program);
     clReleaseKernel(kernel_input);
-    clReleaseKernel(kernel_cell);
-    clReleaseKernel(kernel_output);
+    clReleaseKernel(kernel_layer);
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
 
