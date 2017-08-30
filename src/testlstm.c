@@ -2,12 +2,12 @@
 #include <limits.h>
 #include <string.h>
 #include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <math.h>
 #include <pthread.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <assert.h>
 #include <CL/opencl.h>
 
