@@ -537,9 +537,6 @@ int main(int argc, char *argv[])
     }
 
     // Create the compute kernel from the program
-    cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
-    checkError(err, "Creating lstm kernel");
-
     cl_kernel kernel_layer = clCreateKernel(program, "lstm_layer", &err);
     checkError(err, "Creating lstm kernel");
 
@@ -586,15 +583,11 @@ int main(int argc, char *argv[])
         if (i == 0)
             flags = LSTM_FLAG_INIT_STATE;
         for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
-            err  = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &flags);
-            err |= clSetKernelArg(kernel_input, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
-            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), &d_s[j]);
-            checkError(err, "Setting input kernel args");
-            err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
-            checkError(err, "Enqueueing input kernel");
-
-            err  = clSetKernelArg(kernel_layer, 0, sizeof(cl_mem), &d_w[j]);
-            err |= clSetKernelArg(kernel_layer, 1, sizeof(cl_mem), &d_s[j]);
+            err  = clSetKernelArg(kernel_layer, 0, sizeof(cl_int), &flags);
+            err |= clSetKernelArg(kernel_layer, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
+            err |= clSetKernelArg(kernel_layer, 2, sizeof(cl_mem), &d_s[j]);
+            err |= clSetKernelArg(kernel_layer, 3, sizeof(cl_mem), &d_w[j]);
+            err |= clSetKernelArg(kernel_layer, 4, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting layer kernel args");
             err = clEnqueueTask(commands, kernel_layer, 0, NULL, NULL);
             checkError(err, "Enqueueing layer kernel");
@@ -650,7 +643,6 @@ int main(int argc, char *argv[])
 #endif /* USE_XCL_DATAFLOW */
 
     clReleaseProgram(program);
-    clReleaseKernel(kernel_input);
     clReleaseKernel(kernel_layer);
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
