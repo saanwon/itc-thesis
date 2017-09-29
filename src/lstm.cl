@@ -3,23 +3,29 @@
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
 
-#if RNN_CELL_SIZE < 1024
-#define MAX_CELL_SIZE   1024
+#if RNN_CELL_SIZE < 1500
+#define MAX_CELL_SIZE   1500
 #else
 #define MAX_CELL_SIZE   RNN_CELL_SIZE
 #endif
 
-global float lstm_x_h[2*MAX_CELL_SIZE]  __attribute__((xcl_array_partition(complete,1)));
-global float lstm_old_c[MAX_CELL_SIZE];
-global float lstm_new_h[MAX_CELL_SIZE];
-global float lstm_new_c[MAX_CELL_SIZE];
+#define GATE_PARAM_SIZE         (2*RNN_CELL_SIZE+1)
 
-__attribute__ ((reqd_work_group_size(1, 1, 1)))
-__kernel void lstm_input(               int   flags,
-                         __global const float *x,       // [cell_size]
-                         __global const float *state    // [cell_size*2]
-                        )
+static
+void lstm_cell(               int   flags,
+               __global const float *x,         // [cell_size]
+               __global const float *old_state, // [cell_size*2]
+		       __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+               __global float       *new_state) // [cell_size*2]
 {
+	float lstm_x_h[2*MAX_CELL_SIZE]  __attribute__((xcl_array_partition(complete,1)));
+	float lstm_old_c[MAX_CELL_SIZE];
+	float lstm_new_h[MAX_CELL_SIZE];
+	float lstm_new_c[MAX_CELL_SIZE];
+
+    float gates[4]; //__attribute__((xcl_array_partition(complete,1)));
+    float wloc[(2*MAX_CELL_SIZE+1) * 4] __attribute__((xcl_array_partition(cyclic,4,1)));
+
     __attribute__((xcl_pipeline_loop))
     for (int i = 0; i < RNN_CELL_SIZE; ++i) {
         lstm_x_h[i] = x[i];
@@ -38,37 +44,21 @@ __kernel void lstm_input(               int   flags,
         int j = 0;
         __attribute__((xcl_pipeline_loop))
         for (int i = RNN_CELL_SIZE; j < RNN_CELL_SIZE; ++i, ++j) {
-            lstm_x_h[i] = state[j];
+            lstm_x_h[i] = old_state[j];
         }
         __attribute__((xcl_pipeline_loop))
         for (int i = 0; i < RNN_CELL_SIZE; ++i, ++j) {
-            lstm_old_c[i] = state[j];
+            lstm_old_c[i] = old_state[j];
         }
     }
-}
 
-#define GATE_PARAM_SIZE         (2*RNN_CELL_SIZE+1)
-__attribute__ ((reqd_work_group_size(1, 1, 1)))
-__kernel void lstm_cell(__global const float *W)        // [cell_size, (2*cell_size+1)*4]
-
-{
-    int global_id       = get_global_id(0);
-    int global_threads  = get_global_size(0);
-
-    int start_ci = global_id       * RNN_CELL_SIZE / global_threads;
-    int end_ci   = (global_id + 1) * RNN_CELL_SIZE / global_threads;
-
-    float gates[4]; //__attribute__((xcl_array_partition(complete,1)));
-    float wloc[2*RNN_CELL_SIZE * 4] __attribute__((xcl_array_partition(cyclic,4,1)));
-
-    loop_cell: for (int ci = start_ci; ci < end_ci; ci++) {
+    loop_cell: for (int ci = 0; ci < RNN_CELL_SIZE; ci++) {
         __global const float *Wl = W + ci * (GATE_PARAM_SIZE * 4);
 
         __attribute__((xcl_pipeline_loop))
         loop_wloc_init: for (int i = 0; i < 2*RNN_CELL_SIZE * 4; i++) {
             wloc[i] = Wl[i];
         }
-
         __attribute__((xcl_pipeline_loop))
         loop_gates_init: for (int gi = 0, i = 2*RNN_CELL_SIZE*4; gi < 4; gi++, i++) {
             gates[gi] = Wl[i];
@@ -97,18 +87,94 @@ __kernel void lstm_cell(__global const float *W)        // [cell_size, (2*cell_s
         // New Hidden Status
         lstm_new_h[ci] = Ot * act_tanh(lstm_new_c[ci]);
     }
-}
 
-__attribute__ ((reqd_work_group_size(1, 1, 1)))
-__kernel void lstm_output(__global float *state)
-{
     int j = 0;
     __attribute__((xcl_pipeline_loop))
     for (int i = 0; i < RNN_CELL_SIZE; ++i, ++j) {
-        state[j] = lstm_new_h[i];
+        new_state[j] = lstm_new_h[i];
     }
     __attribute__((xcl_pipeline_loop))
     for (int i = 0; i < RNN_CELL_SIZE; ++i, ++j) {
-        state[j] = lstm_new_c[i];
+        new_state[j] = lstm_new_c[i];
     }
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer0(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer1(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer2(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer3(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer4(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer5(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer6(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
+}
+
+__kernel __attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_layer7(               int   flags,
+                 __global const float *x,         // [cell_size]
+                 __global const float *old_state, // [cell_size*2]
+		         __global const float *W,         // [cell_size, (2*cell_size+1)*4]
+                 __global float       *new_state) // [cell_size*2]
+{
+    lstm_cell(flags, x, old_state, W, new_state);
 }

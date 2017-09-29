@@ -13,11 +13,8 @@
 
 #include "kerneldefs.h"
 
-//#define NUM_COMPUTE_UNITS       4
-#define NUM_COMPUTE_UNITS       2
-
-#define NUM_RNN_LAYERS  2
-
+//#define NUM_RNN_LAYERS  2
+#define NUM_RNN_LAYERS  8
 
 #ifndef PATH_MAX
 #define PATH_MAX        256
@@ -281,7 +278,7 @@ static int load_parameters(const char *folder)
             malloc(NUM_RNN_LAYERS * LSTM_PARAM_SIZE * sizeof(cl_float));
 #endif /* USE_XCL_DATAFLOW */
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
-        snprintf(fname, PATH_MAX, "%s/params.lstm%d.bin", folder, i);
+        snprintf(fname, PATH_MAX, "%s/params.lstm%d.bin", folder, i % 2); // FIXME
 #ifdef USE_XCL_DATAFLOW
         if (load_lstm_params(fname, lstm_weights + i * LSTM_PARAM_SIZE) == NULL)
             return -1;
@@ -540,14 +537,13 @@ int main(int argc, char *argv[])
     }
 
     // Create the compute kernel from the program
-    cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
-    checkError(err, "Creating lstm kernel");
-
-    cl_kernel kernel_cell = clCreateKernel(program, "lstm_cell", &err);
-    checkError(err, "Creating lstm kernel");
-
-    cl_kernel kernel_output = clCreateKernel(program, "lstm_output", &err);
-    checkError(err, "Creating lstm kernel");
+    cl_kernel kernel_layer[NUM_RNN_LAYERS];
+    for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
+        char kernel_name[64];
+        sprintf(kernel_name, "lstm_layer%d", i);
+        kernel_layer[i] = clCreateKernel(program, kernel_name, &err);
+        checkError(err, "Creating lstm kernel");
+    }
 
     cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
     assert(h_x != NULL);
@@ -575,8 +571,6 @@ int main(int argc, char *argv[])
     startCrossEntropyThread();
 #endif
 
-    size_t global_work_size[3] = {NUM_COMPUTE_UNITS, 1, 1};
-    size_t local_work_size[3] = {1, 1, 1};
     int percent = 0;
 
     double rtime = wtime();
@@ -594,23 +588,14 @@ int main(int argc, char *argv[])
         if (i == 0)
             flags = LSTM_FLAG_INIT_STATE;
         for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
-            err  = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &flags);
-            err |= clSetKernelArg(kernel_input, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
-            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), &d_s[j]);
-            checkError(err, "Setting input kernel args");
-            err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
-            checkError(err, "Enqueueing input kernel");
-
-            err = clSetKernelArg(kernel_cell, 0, sizeof(cl_mem), &d_w[j]);
+            err  = clSetKernelArg(kernel_layer[j], 0, sizeof(cl_int), &flags);
+            err |= clSetKernelArg(kernel_layer[j], 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
+            err |= clSetKernelArg(kernel_layer[j], 2, sizeof(cl_mem), &d_s[j]);
+            err |= clSetKernelArg(kernel_layer[j], 3, sizeof(cl_mem), &d_w[j]);
+            err |= clSetKernelArg(kernel_layer[j], 4, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting cell kernel args");
-            err = clEnqueueNDRangeKernel(commands, kernel_cell,
-                    1, NULL, global_work_size, local_work_size,
-                    0, NULL, NULL);
-            checkError(err, "Enqueueing cell kernel");
 
-            err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_s[j]);
-            checkError(err, "Setting output kernel args");
-            err = clEnqueueTask(commands, kernel_output, 0, NULL, NULL);
+            err = clEnqueueTask(commands, kernel_layer[j], 0, NULL, NULL);
             checkError(err, "Enqueueing output kernel");
         }
 
@@ -664,9 +649,8 @@ int main(int argc, char *argv[])
 #endif /* USE_XCL_DATAFLOW */
 
     clReleaseProgram(program);
-    clReleaseKernel(kernel_input);
-    clReleaseKernel(kernel_cell);
-    clReleaseKernel(kernel_output);
+    for (int i = 0; i < NUM_RNN_LAYERS; ++i)
+        clReleaseKernel(kernel_layer[i]);
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
 
