@@ -13,8 +13,7 @@
 
 #include "kerneldefs.h"
 
-//#define NUM_COMPUTE_UNITS       4
-#define NUM_COMPUTE_UNITS       2
+#define NUM_COMPUTE_UNITS       4
 
 #define NUM_RNN_LAYERS  2
 
@@ -281,7 +280,7 @@ static int load_parameters(const char *folder)
             malloc(NUM_RNN_LAYERS * LSTM_PARAM_SIZE * sizeof(cl_float));
 #endif /* USE_XCL_DATAFLOW */
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
-        snprintf(fname, PATH_MAX, "%s/params.lstm%d.bin", folder, i);
+        snprintf(fname, PATH_MAX, "%s/params.lstm%d.bin", folder, i % 2); // FIXME
 #ifdef USE_XCL_DATAFLOW
         if (load_lstm_params(fname, lstm_weights + i * LSTM_PARAM_SIZE) == NULL)
             return -1;
@@ -392,9 +391,21 @@ struct output_cb {
 static cl_float costs = 0.;
 
 static pthread_t outputThread;
+#ifdef USE_PIPE_FD_FOR_CALC
 static int outputPipeFd[2] = {-1, -1};
+#else
+static pthread_cond_t outcb_buf_cond;
+static pthread_mutex_t outcb_buf_mutex;
+static int outcb_thread_quit = 0;
+static int outcb_buf_w = 0;
+static int outcb_buf_size[2];
+static int outcb_buf_len[2];
+static int outcb_buf_total;
+static struct output_cb **outcb_buf[2];
+#endif
 static void *cross_entropy_proc(void *arg)
 {
+#ifdef USE_PIPE_FD_FOR_CALC
     struct output_cb *pcb;
     while (read(outputPipeFd[0], &pcb, sizeof(struct output_cb *)) == sizeof(struct output_cb *) &&
            pcb != NULL)
@@ -405,14 +416,59 @@ static void *cross_entropy_proc(void *arg)
         free(pcb->output);
         free(pcb);
     }
+#else
+    pthread_mutex_lock(&outcb_buf_mutex);
+    while (! outcb_thread_quit && outcb_buf_total < TEST_LOOP_COUNT) {
+        if (outcb_buf_size[outcb_buf_w] == 0) {
+            pthread_cond_wait(&outcb_buf_cond, &outcb_buf_mutex);
+            continue;
+        }
+
+        int i = outcb_buf_w;
+        outcb_buf_w = !outcb_buf_w;
+
+        pthread_mutex_unlock(&outcb_buf_mutex);
+        for (int j = 0; j < outcb_buf_len[i]; ++j) {
+            struct output_cb *pcb = outcb_buf[i][j];
+
+            softmax(pcb->output, probs);
+            costs += cross_entropy(probs, test_words[pcb->idx+1]);
+
+            free(pcb->output);
+            free(pcb);
+        }
+
+        outcb_buf_total += outcb_buf_len[i];
+        outcb_buf_len[i] = 0;
+        pthread_mutex_lock(&outcb_buf_mutex);
+    }
+    pthread_mutex_unlock(&outcb_buf_mutex);
+    printf("outcb_buf_total : %d\n", outcb_buf_total);
+#endif
     return NULL;
 }
 #endif /* CALC_PERPLEXITY */
 static void processNextOutput(struct output_cb *pcb)
 {
 #ifdef CALC_PERPLEXITY
+#ifdef USE_PIPE_FD_FOR_CALC
     if (outputPipeFd[1] != -1)
         write(outputPipeFd[1], &pcb, sizeof(struct output_cb *));
+#else
+    pthread_mutex_lock(&outcb_buf_mutex);
+    int i = outcb_buf_w;
+    if (outcb_buf_size[i] == outcb_buf_len[i]) {
+        outcb_buf_size[i] += 4096;
+        outcb_buf[i] = (struct output_cb **)
+                realloc(outcb_buf[i], sizeof(struct output_cb *) * outcb_buf_size[i]);
+        assert(outcb_buf[i] != NULL);
+    }
+
+    int j = outcb_buf_len[i]++;
+    outcb_buf[i][j] = pcb;
+    pthread_cond_signal(&outcb_buf_cond);
+    pthread_mutex_unlock(&outcb_buf_mutex);
+#endif
 #else
     free(pcb->output);
     free(pcb);
@@ -421,20 +477,34 @@ static void processNextOutput(struct output_cb *pcb)
 #ifdef CALC_PERPLEXITY
 static void startCrossEntropyThread(void)
 {
+#ifdef USE_PIPE_FD_FOR_CALC
     if (pipe(outputPipeFd) == -1)
         perror("pipe");
+#else
+    pthread_mutex_init(&outcb_buf_mutex, NULL);
+    pthread_cond_init(&outcb_buf_cond, NULL);
+#endif
     pthread_create(&outputThread, NULL, cross_entropy_proc, NULL);
 }
 static void stopCrossEntropyThread(void)
 {
+#ifdef USE_PIPE_FD_FOR_CALC
     processNextOutput(NULL);
+#else
+    pthread_mutex_lock(&outcb_buf_mutex);
+    outcb_thread_quit = 1;
+    pthread_cond_signal(&outcb_buf_cond);
+    pthread_mutex_unlock(&outcb_buf_mutex);
+#endif
 
     pthread_join(outputThread, NULL);
 
+#ifdef USE_PIPE_FD_FOR_CALC
     close(outputPipeFd[0]);
     outputPipeFd[0] = -1;
     close(outputPipeFd[1]);
     outputPipeFd[1] = -1;
+#endif
 }
 #endif /* CALC_PERPLEXITY */
 #if 0
@@ -580,6 +650,7 @@ int main(int argc, char *argv[])
     int percent = 0;
 
     double rtime = wtime();
+    double itime = wtime();
 
     for (int i = 0; i < TEST_LOOP_COUNT; ++i) {
         if (lookup_embedding(test_words[i], h_x) != 0)
@@ -629,9 +700,12 @@ int main(int argc, char *argv[])
 #endif
 
         if (percent != ((i+1) * 100) / TEST_LOOP_COUNT) {
+            itime = wtime() - itime;
             percent = ((i+1) * 100) / TEST_LOOP_COUNT;
-            printf("\r%d%%", percent);
+            printf("\r%d%% (%.3f)", percent, itime);
             fflush(stdout);
+
+            itime = wtime();
         }
     }
 

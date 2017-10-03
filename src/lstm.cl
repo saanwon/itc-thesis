@@ -3,11 +3,7 @@
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
 
-#if RNN_CELL_SIZE < 1024
-#define MAX_CELL_SIZE   1024
-#else
-#define MAX_CELL_SIZE   RNN_CELL_SIZE
-#endif
+#define MAX_CELL_SIZE   1500
 
 global float lstm_x_h[2*MAX_CELL_SIZE]  __attribute__((xcl_array_partition(complete,1)));
 global float lstm_old_c[MAX_CELL_SIZE];
