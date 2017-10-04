@@ -3,25 +3,46 @@
   <configuration name="Emulation-CPU" id="com.xilinx.sdx.opencl.config.sw_emu.1783004739">
     <configBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true">
       <binaryContainers name="binary_container_1">
-        <kernels name="lstm_cell" sourceFile="src/lstm.cl" numComputeUnits="4"/>
         <kernels name="lstm_output" sourceFile="src/lstm.cl"/>
         <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell0" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell1" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell2" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell3" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell4" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell5" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell6" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell7" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </configBuildOptions>
     <lastBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true">
       <binaryContainers name="binary_container_1">
-        <kernels name="lstm_cell" sourceFile="src/lstm.cl" numComputeUnits="2"/>
         <kernels name="lstm_output" sourceFile="src/lstm.cl"/>
         <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell0" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell1" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell2" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell3" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell4" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell5" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell6" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell7" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </lastBuildOptions>
   </configuration>
   <configuration name="Emulation-HW" id="com.xilinx.sdx.opencl.config.hw_emu.559842846">
     <configBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true" target="hw_emu">
       <binaryContainers name="binary_container_1">
-        <kernels name="lstm_cell" sourceFile="src/lstm.cl" numComputeUnits="4"/>
         <kernels name="lstm_output" sourceFile="src/lstm.cl"/>
         <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell0" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell1" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell2" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell3" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell4" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell5" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell6" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell7" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </configBuildOptions>
     <lastBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true" target="hw_emu">
@@ -35,16 +56,30 @@
   <configuration name="System" id="com.xilinx.sdx.opencl.config.hw.1518402671">
     <configBuildOptions xsi:type="openclProject:OpenCLOptions" target="hw">
       <binaryContainers name="binary_container_1">
-        <kernels name="lstm_cell" sourceFile="src/lstm.cl" numComputeUnits="4"/>
         <kernels name="lstm_output" sourceFile="src/lstm.cl"/>
         <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell0" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell1" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell2" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell3" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell4" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell5" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell6" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell7" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </configBuildOptions>
     <lastBuildOptions xsi:type="openclProject:OpenCLOptions" target="hw">
       <binaryContainers name="binary_container_1">
-        <kernels name="lstm_cell" sourceFile="src/lstm.cl" numComputeUnits="4"/>
         <kernels name="lstm_output" sourceFile="src/lstm.cl"/>
         <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell0" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell1" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell2" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell3" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell4" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell5" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell6" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_cell7" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </lastBuildOptions>
   </configuration>

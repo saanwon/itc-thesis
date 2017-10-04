@@ -13,10 +13,13 @@
 
 #include "kerneldefs.h"
 
-#define NUM_COMPUTE_UNITS       4
+//#define RNN_CELL_SIZE     1500
+#define RNN_CELL_SIZE     200
+//#define RNN_CELL_SIZE     10
+
+#define NUM_CELL_KERNEL 8
 
 #define NUM_RNN_LAYERS  2
-
 
 #ifndef PATH_MAX
 #define PATH_MAX        256
@@ -34,6 +37,7 @@
 //#define TEST_LOOP_COUNT	1
 
 #define CALC_PERPLEXITY
+//#define USE_PIPE_FD_FOR_CALC
 //#define NO_KERNEL_CALL
 
 #include "err_code.h"
@@ -396,7 +400,7 @@ static int outputPipeFd[2] = {-1, -1};
 #else
 static pthread_cond_t outcb_buf_cond;
 static pthread_mutex_t outcb_buf_mutex;
-static int outcb_thread_quit = 0;
+//static int outcb_thread_quit = 0;
 static int outcb_buf_w = 0;
 static int outcb_buf_size[2];
 static int outcb_buf_len[2];
@@ -418,7 +422,7 @@ static void *cross_entropy_proc(void *arg)
     }
 #else
     pthread_mutex_lock(&outcb_buf_mutex);
-    while (! outcb_thread_quit && outcb_buf_total < TEST_LOOP_COUNT) {
+    while (outcb_buf_total < TEST_LOOP_COUNT) {
         if (outcb_buf_size[outcb_buf_w] == 0) {
             pthread_cond_wait(&outcb_buf_cond, &outcb_buf_mutex);
             continue;
@@ -492,7 +496,7 @@ static void stopCrossEntropyThread(void)
     processNextOutput(NULL);
 #else
     pthread_mutex_lock(&outcb_buf_mutex);
-    outcb_thread_quit = 1;
+    //outcb_thread_quit = 1;
     pthread_cond_signal(&outcb_buf_cond);
     pthread_mutex_unlock(&outcb_buf_mutex);
 #endif
@@ -577,7 +581,7 @@ int main(int argc, char *argv[])
     checkError(err, "Creating context");
 
     // Create a command queue
-    cl_command_queue commands = clCreateCommandQueue(context, device_id, 0, &err);
+    cl_command_queue commands = clCreateCommandQueue(context, device_id, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, &err);
     checkError(err, "Creating command queue");
 
     // Create the compute program from the binary file
@@ -613,8 +617,13 @@ int main(int argc, char *argv[])
     cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
     checkError(err, "Creating lstm kernel");
 
-    cl_kernel kernel_cell = clCreateKernel(program, "lstm_cell", &err);
-    checkError(err, "Creating lstm kernel");
+    cl_kernel kernel_cell[NUM_CELL_KERNEL];
+    for (int i = 0; i < NUM_CELL_KERNEL; ++i) {
+        char kernel_name[64];
+        sprintf(kernel_name, "lstm_cell%d", i);
+        kernel_cell[i] = clCreateKernel(program, kernel_name, &err);
+        checkError(err, "Creating lstm kernel");
+    }
 
     cl_kernel kernel_output = clCreateKernel(program, "lstm_output", &err);
     checkError(err, "Creating lstm kernel");
@@ -645,8 +654,19 @@ int main(int argc, char *argv[])
     startCrossEntropyThread();
 #endif
 
-    size_t global_work_size[3] = {NUM_COMPUTE_UNITS, 1, 1};
-    size_t local_work_size[3] = {1, 1, 1};
+    err  = clSetKernelArg(kernel_input,  0, sizeof(cl_int), &hidden_size);
+    err |= clSetKernelArg(kernel_output, 0, sizeof(cl_int), &hidden_size);
+    checkError(err, "Enqueueing input/output kernel");
+
+    for (int i = 0; i < NUM_CELL_KERNEL; ++i) {
+        int start_ci =  i    * hidden_size / NUM_CELL_KERNEL;
+        int end_ci   = (i+1) * hidden_size / NUM_CELL_KERNEL;
+        err  = clSetKernelArg(kernel_cell[i], 0, sizeof(cl_int), &hidden_size);
+        err |= clSetKernelArg(kernel_cell[i], 1, sizeof(cl_int), &start_ci);
+        err |= clSetKernelArg(kernel_cell[i], 2, sizeof(cl_int), &end_ci);
+        checkError(err, "Enqueueing cell kernel");
+    }
+
     int percent = 0;
 
     double rtime = wtime();
@@ -665,24 +685,33 @@ int main(int argc, char *argv[])
         if (i == 0)
             flags = LSTM_FLAG_INIT_STATE;
         for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
-            err  = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &flags);
-            err |= clSetKernelArg(kernel_input, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
-            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), &d_s[j]);
+            err  = clSetKernelArg(kernel_input, 1, sizeof(cl_int), &flags);
+            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
+            err |= clSetKernelArg(kernel_input, 3, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting input kernel args");
             err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
             checkError(err, "Enqueueing input kernel");
 
-            err = clSetKernelArg(kernel_cell, 0, sizeof(cl_mem), &d_w[j]);
-            checkError(err, "Setting cell kernel args");
-            err = clEnqueueNDRangeKernel(commands, kernel_cell,
-                    1, NULL, global_work_size, local_work_size,
-                    0, NULL, NULL);
-            checkError(err, "Enqueueing cell kernel");
+            err = clFinish(commands);
+            checkError(err, "Enqueueing barrier");
 
-            err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_s[j]);
+            for (int k = 0; k < NUM_CELL_KERNEL; ++k) {
+                err |= clSetKernelArg(kernel_cell[k], 3, sizeof(cl_mem), &d_w[j]);
+                checkError(err, "Setting cell kernel args");
+                err = clEnqueueTask(commands, kernel_cell[k], 0, NULL, NULL);
+                checkError(err, "Enqueueing cell kernel");
+            }
+
+            err = clFinish(commands);
+            checkError(err, "Enqueueing barrier");
+
+            err = clSetKernelArg(kernel_output, 1, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting output kernel args");
             err = clEnqueueTask(commands, kernel_output, 0, NULL, NULL);
             checkError(err, "Enqueueing output kernel");
+
+            err = clFinish(commands);
+            checkError(err, "Enqueueing barrier");
         }
 
         struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
@@ -719,8 +748,10 @@ int main(int argc, char *argv[])
 #ifdef CALC_PERPLEXITY
     sleep(1);
     stopCrossEntropyThread();
+    pthread_mutex_lock(&outcb_buf_mutex);
     printf("Cross Entropy : %.8f\n", costs);
     printf("Perplexity : %.8f\n", exp(costs / TEST_LOOP_COUNT));
+    pthread_mutex_unlock(&outcb_buf_mutex);
 #endif
     //printf("in_sum : %f, out_sum : %f\n", in_sum, out_sum);
 
@@ -739,7 +770,8 @@ int main(int argc, char *argv[])
 
     clReleaseProgram(program);
     clReleaseKernel(kernel_input);
-    clReleaseKernel(kernel_cell);
+    for (int i = 0; i < NUM_CELL_KERNEL; ++i)
+        clReleaseKernel(kernel_cell[i]);
     clReleaseKernel(kernel_output);
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
