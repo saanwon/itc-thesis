@@ -13,8 +13,12 @@
 
 #include "kerneldefs.h"
 
-//#define NUM_RNN_LAYERS  2
-#define NUM_RNN_LAYERS  8
+//#define RNN_CELL_SIZE     1500
+#define RNN_CELL_SIZE     200
+//#define RNN_CELL_SIZE     10
+
+
+#define NUM_RNN_LAYERS  2
 
 #ifndef PATH_MAX
 #define PATH_MAX        256
@@ -26,12 +30,16 @@
 #define DEFAULT_DATA_DIR		"../../data.tiny"
 #endif
 
+//#define USE_SINGLE_QUEUE
+
+#define CALC_PERPLEXITY
+//#define USE_PIPE_FD_FOR_CALC
+
 #define TEST_LOOP_COUNT	(test_words_size-1)
 //#define TEST_LOOP_COUNT	1000
 //#define TEST_LOOP_COUNT	2
 //#define TEST_LOOP_COUNT	1
 
-#define CALC_PERPLEXITY
 //#define NO_KERNEL_CALL
 
 #include "err_code.h"
@@ -389,9 +397,21 @@ struct output_cb {
 static cl_float costs = 0.;
 
 static pthread_t outputThread;
+#ifdef USE_PIPE_FD_FOR_CALC
 static int outputPipeFd[2] = {-1, -1};
+#else
+static pthread_cond_t outcb_buf_cond;
+static pthread_mutex_t outcb_buf_mutex;
+//static int outcb_thread_quit = 0;
+static int outcb_buf_w = 0;
+static int outcb_buf_size[2];
+static int outcb_buf_len[2];
+static int outcb_buf_total;
+static struct output_cb **outcb_buf[2];
+#endif
 static void *cross_entropy_proc(void *arg)
 {
+#ifdef USE_PIPE_FD_FOR_CALC
     struct output_cb *pcb;
     while (read(outputPipeFd[0], &pcb, sizeof(struct output_cb *)) == sizeof(struct output_cb *) &&
            pcb != NULL)
@@ -402,14 +422,59 @@ static void *cross_entropy_proc(void *arg)
         free(pcb->output);
         free(pcb);
     }
+#else
+    pthread_mutex_lock(&outcb_buf_mutex);
+    while (/*! outcb_thread_quit && */outcb_buf_total < TEST_LOOP_COUNT) {
+        if (outcb_buf_size[outcb_buf_w] == 0) {
+            pthread_cond_wait(&outcb_buf_cond, &outcb_buf_mutex);
+            continue;
+        }
+
+        int i = outcb_buf_w;
+        outcb_buf_w = !outcb_buf_w;
+
+        pthread_mutex_unlock(&outcb_buf_mutex);
+        for (int j = 0; j < outcb_buf_len[i]; ++j) {
+            struct output_cb *pcb = outcb_buf[i][j];
+
+            softmax(pcb->output, probs);
+            costs += cross_entropy(probs, test_words[pcb->idx+1]);
+
+            free(pcb->output);
+            free(pcb);
+        }
+
+        outcb_buf_total += outcb_buf_len[i];
+        outcb_buf_len[i] = 0;
+        pthread_mutex_lock(&outcb_buf_mutex);
+    }
+    pthread_mutex_unlock(&outcb_buf_mutex);
+    printf("outcb_buf_total : %d\n", outcb_buf_total);
+#endif
     return NULL;
 }
 #endif /* CALC_PERPLEXITY */
 static void processNextOutput(struct output_cb *pcb)
 {
 #ifdef CALC_PERPLEXITY
+#ifdef USE_PIPE_FD_FOR_CALC
     if (outputPipeFd[1] != -1)
         write(outputPipeFd[1], &pcb, sizeof(struct output_cb *));
+#else
+    pthread_mutex_lock(&outcb_buf_mutex);
+    int i = outcb_buf_w;
+    if (outcb_buf_size[i] == outcb_buf_len[i]) {
+        outcb_buf_size[i] += 4096;
+        outcb_buf[i] = (struct output_cb **)
+                realloc(outcb_buf[i], sizeof(struct output_cb *) * outcb_buf_size[i]);
+        assert(outcb_buf[i] != NULL);
+    }
+
+    int j = outcb_buf_len[i]++;
+    outcb_buf[i][j] = pcb;
+    pthread_cond_signal(&outcb_buf_cond);
+    pthread_mutex_unlock(&outcb_buf_mutex);
+#endif
 #else
     free(pcb->output);
     free(pcb);
@@ -418,20 +483,34 @@ static void processNextOutput(struct output_cb *pcb)
 #ifdef CALC_PERPLEXITY
 static void startCrossEntropyThread(void)
 {
+#ifdef USE_PIPE_FD_FOR_CALC
     if (pipe(outputPipeFd) == -1)
         perror("pipe");
+#else
+    pthread_mutex_init(&outcb_buf_mutex, NULL);
+    pthread_cond_init(&outcb_buf_cond, NULL);
+#endif
     pthread_create(&outputThread, NULL, cross_entropy_proc, NULL);
 }
 static void stopCrossEntropyThread(void)
 {
+#ifdef USE_PIPE_FD_FOR_CALC
     processNextOutput(NULL);
+#else
+    pthread_mutex_lock(&outcb_buf_mutex);
+//    outcb_thread_quit = 1;
+    pthread_cond_signal(&outcb_buf_cond);
+    pthread_mutex_unlock(&outcb_buf_mutex);
+#endif
 
     pthread_join(outputThread, NULL);
 
+#ifdef USE_PIPE_FD_FOR_CALC
     close(outputPipeFd[0]);
     outputPipeFd[0] = -1;
     close(outputPipeFd[1]);
     outputPipeFd[1] = -1;
+#endif
 }
 #endif /* CALC_PERPLEXITY */
 #if 0
@@ -504,8 +583,16 @@ int main(int argc, char *argv[])
     checkError(err, "Creating context");
 
     // Create a command queue
+#ifdef USE_SINGLE_QUEUE
     cl_command_queue commands = clCreateCommandQueue(context, device_id, 0, &err);
     checkError(err, "Creating command queue");
+#else
+    cl_command_queue layer_cq[NUM_RNN_LAYERS];
+    for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
+        layer_cq[i] = clCreateCommandQueue(context, device_id, 0, &err);
+        checkError(err, "Creating command queue");
+    }
+#endif
 
     // Create the compute program from the binary file
     printf("Loading %s\n", argv[1]);
@@ -545,11 +632,15 @@ int main(int argc, char *argv[])
         checkError(err, "Creating lstm kernel");
     }
 
-    cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
-    assert(h_x != NULL);
-    cl_mem d_x = clCreateBuffer(context, CL_MEM_READ_ONLY,
-                    sizeof(cl_float) * hidden_size, NULL, &err);
-    checkError(err, "Creating buffer d_x");
+    cl_float    *h_x[2];
+    cl_mem      d_x[2];
+    for (int i = 0; i < 2; ++i) {
+        h_x[i] = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
+        assert(h_x[i] != NULL);
+        d_x[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
+                        sizeof(cl_float) * hidden_size, NULL, &err);
+        checkError(err, "Creating buffer d_x");
+    }
 
     cl_mem d_s[NUM_RNN_LAYERS];
     cl_mem d_w[NUM_RNN_LAYERS];
@@ -571,59 +662,76 @@ int main(int argc, char *argv[])
     startCrossEntropyThread();
 #endif
 
+    for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
+        int cell_size = RNN_CELL_SIZE;
+        err  = clSetKernelArg(kernel_layer[j], 0, sizeof(cl_int), &cell_size);
+        checkError(err, "Setting cell kernel args");
+    }
+
     int percent = 0;
 
     double rtime = wtime();
+    double itime = wtime();
 
-    for (int i = 0; i < TEST_LOOP_COUNT; ++i) {
-        if (lookup_embedding(test_words[i], h_x) != 0)
-            return EXIT_FAILURE;
+    for (int i = 0; i < (TEST_LOOP_COUNT + NUM_RNN_LAYERS); ++i) {
+        for (int j = NUM_RNN_LAYERS-1; j >= 0; --j) {
+            if (j > i) continue;
 
-        err = clEnqueueWriteBuffer(commands, d_x, CL_TRUE, 0,
-                                sizeof(cl_float) * hidden_size, h_x,
-                                0, NULL, NULL);
-        checkError(err, "Writing buffer d_x");
+            if (i >= NUM_RNN_LAYERS && j == NUM_RNN_LAYERS-1) {
+                struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
+                pcb->idx = i - NUM_RNN_LAYERS;
+                pcb->output = (float *) malloc(sizeof(cl_float) * hidden_size);
 
-        int flags = 0;
-        if (i == 0)
-            flags = LSTM_FLAG_INIT_STATE;
-        for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
-            err  = clSetKernelArg(kernel_layer[j], 0, sizeof(cl_int), &flags);
-            err |= clSetKernelArg(kernel_layer[j], 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
-            err |= clSetKernelArg(kernel_layer[j], 2, sizeof(cl_mem), &d_s[j]);
-            err |= clSetKernelArg(kernel_layer[j], 3, sizeof(cl_mem), &d_w[j]);
-            err |= clSetKernelArg(kernel_layer[j], 4, sizeof(cl_mem), &d_s[j]);
+                err = clEnqueueReadBuffer(layer_cq[j], d_s[j], CL_TRUE, 0,
+                                          sizeof(cl_float) * hidden_size, pcb->output,
+                                          0, NULL, NULL);
+                checkError(err, "Reading back d_y");
+                processNextOutput(pcb);
+
+                if (percent != ((i+1) * 100) / TEST_LOOP_COUNT) {
+                    itime = wtime() - itime;
+                    percent = ((i+1) * 100) / TEST_LOOP_COUNT;
+                    printf("\r%d%% (%.3f)", percent, itime);
+                    fflush(stdout);
+
+                    itime = wtime();
+                }
+            }
+
+            if (i >= TEST_LOOP_COUNT && j <= (i-TEST_LOOP_COUNT))
+                continue;
+
+            int e_o = 0;
+            if (j == 0) {
+                e_o = i & 1;
+
+                if (lookup_embedding(test_words[i], h_x[e_o]) != 0)
+                    return EXIT_FAILURE;
+                err = clEnqueueWriteBuffer(layer_cq[j], d_x[e_o], CL_TRUE, 0,
+                        sizeof(cl_float) * hidden_size, h_x[e_o],
+                        0, NULL, NULL);
+                checkError(err, "Writing buffer d_x");
+            } else {
+                err = clFinish(layer_cq[j-1]);
+                checkError(err, "Finish layer kernel");
+            }
+
+            int flags = 0;
+            if (j == i)
+                flags = LSTM_FLAG_INIT_STATE;
+            err  = clSetKernelArg(kernel_layer[j], 1, sizeof(cl_int), &flags);
+            err |= clSetKernelArg(kernel_layer[j], 2, sizeof(cl_mem), j ? &d_s[j-1] : &d_x[e_o]);
+            err |= clSetKernelArg(kernel_layer[j], 3, sizeof(cl_mem), &d_s[j]);
+            err |= clSetKernelArg(kernel_layer[j], 4, sizeof(cl_mem), &d_w[j]);
+            err |= clSetKernelArg(kernel_layer[j], 5, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting cell kernel args");
 
-            err = clEnqueueTask(commands, kernel_layer[j], 0, NULL, NULL);
-            checkError(err, "Enqueueing output kernel");
-        }
-
-        struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
-        pcb->idx = i;
-        pcb->output = (float *) malloc(sizeof(cl_float) * hidden_size);
-        //cl_event event_rbuf;
-        err = clEnqueueReadBuffer(commands, d_s[NUM_RNN_LAYERS-1], CL_TRUE, 0,
-                                  sizeof(cl_float) * hidden_size, pcb->output,
-				  0, NULL, NULL/*&event_rbuf*/);
-        checkError(err, "Reading back d_y");
-#if 0
-        clSetEventCallback(event_rbuf, CL_COMPLETE, outputCB, pcb);
-#else
-        processNextOutput(pcb);
-#endif
-
-        if (percent != ((i+1) * 100) / TEST_LOOP_COUNT) {
-            percent = ((i+1) * 100) / TEST_LOOP_COUNT;
-            printf("\r%d%%", percent);
-            fflush(stdout);
+            err = clEnqueueTask(layer_cq[j], kernel_layer[j], 0, NULL, NULL);
+            checkError(err, "Enqueueing layer kernel");
+            err = clFlush(layer_cq[j]);
+            checkError(err, "Flush layer kernel");
         }
     }
-
-    printf("\nbefore clFinish\n");
-    err = clFinish(commands);
-    printf("after clFinish\n");
-    checkError(err, "clFinish");
 
     rtime = wtime() - rtime;
     printf("\nThe calculation ran in %lf seconds\n", rtime);
@@ -635,8 +743,10 @@ int main(int argc, char *argv[])
 #endif
     //printf("in_sum : %f, out_sum : %f\n", in_sum, out_sum);
 
-    clReleaseMemObject(d_x);
-    free(h_x);
+    clReleaseMemObject(d_x[0]);
+    clReleaseMemObject(d_x[1]);
+    free(h_x[0]);
+    free(h_x[1]);
 #ifdef USE_XCL_DATAFLOW
     clReleaseMemObject(d_w);
     free(lstm_weights);
@@ -651,7 +761,12 @@ int main(int argc, char *argv[])
     clReleaseProgram(program);
     for (int i = 0; i < NUM_RNN_LAYERS; ++i)
         clReleaseKernel(kernel_layer[i]);
+#ifdef USE_SINGLE_QUEUE
     clReleaseCommandQueue(commands);
+#else
+    for (int i = 0; i < NUM_RNN_LAYERS; ++i)
+        clReleaseCommandQueue(layer_cq[i]);
+#endif
     clReleaseContext(context);
 
     free(embed_matrix);
