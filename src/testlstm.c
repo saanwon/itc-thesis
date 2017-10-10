@@ -13,23 +13,32 @@
 
 #include "kerneldefs.h"
 
-#define NUM_COMPUTE_UNITS       4
+#define NUM_COMPUTE_UNITS       1
 
 #define NUM_RNN_LAYERS  2
+
+
+#define RNN_CELL_SIZE     1500
+//#define RNN_CELL_SIZE     200
+//#define RNN_CELL_SIZE     10
 
 
 #ifndef PATH_MAX
 #define PATH_MAX        256
 #endif
 
-#if RNN_CELL_SIZE == 200
+#if RNN_CELL_SIZE == 1500
+#define DEFAULT_DATA_DIR		"../../data.large"
+#elif RNN_CELL_SIZE == 200
 #define DEFAULT_DATA_DIR		"../../data.small"
-#else
+#elif RNN_CELL_SIZE == 10
 #define DEFAULT_DATA_DIR		"../../data.tiny"
+#else
+#error "unsupported RNN_CELL_SIZE"
 #endif
 
-#define TEST_LOOP_COUNT	(test_words_size-1)
-//#define TEST_LOOP_COUNT	1000
+//#define TEST_LOOP_COUNT	(test_words_size-1)
+#define TEST_LOOP_COUNT	1000
 //#define TEST_LOOP_COUNT	2
 //#define TEST_LOOP_COUNT	1
 
@@ -613,10 +622,10 @@ int main(int argc, char *argv[])
     cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
     checkError(err, "Creating lstm kernel");
 
-    cl_kernel kernel_cell = clCreateKernel(program, "lstm_cell", &err);
+    cl_kernel kernel_matrix = clCreateKernel(program, "lstm_matrix", &err);
     checkError(err, "Creating lstm kernel");
 
-    cl_kernel kernel_output = clCreateKernel(program, "lstm_output", &err);
+    cl_kernel kernel_nonlinear = clCreateKernel(program, "lstm_nonlinear", &err);
     checkError(err, "Creating lstm kernel");
 
     cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
@@ -624,6 +633,14 @@ int main(int argc, char *argv[])
     cl_mem d_x = clCreateBuffer(context, CL_MEM_READ_ONLY,
                     sizeof(cl_float) * hidden_size, NULL, &err);
     checkError(err, "Creating buffer d_x");
+
+    err = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &hidden_size);
+    checkError(err, "Setting input kernel args");
+    err = clSetKernelArg(kernel_matrix, 0, sizeof(cl_int), &hidden_size);
+    checkError(err, "Setting cell kernel args");
+    err = clSetKernelArg(kernel_nonlinear, 0, sizeof(cl_int), &hidden_size);
+    checkError(err, "Setting output kernel args");
+
 
     cl_mem d_s[NUM_RNN_LAYERS];
     cl_mem d_w[NUM_RNN_LAYERS];
@@ -665,23 +682,23 @@ int main(int argc, char *argv[])
         if (i == 0)
             flags = LSTM_FLAG_INIT_STATE;
         for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
-            err  = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &flags);
-            err |= clSetKernelArg(kernel_input, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
-            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), &d_s[j]);
+            err  = clSetKernelArg(kernel_input, 1, sizeof(cl_int), &flags);
+            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
+            err |= clSetKernelArg(kernel_input, 3, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting input kernel args");
             err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
             checkError(err, "Enqueueing input kernel");
 
-            err = clSetKernelArg(kernel_cell, 0, sizeof(cl_mem), &d_w[j]);
+            err = clSetKernelArg(kernel_matrix, 1, sizeof(cl_mem), &d_w[j]);
             checkError(err, "Setting cell kernel args");
-            err = clEnqueueNDRangeKernel(commands, kernel_cell,
+            err = clEnqueueNDRangeKernel(commands, kernel_matrix,
                     1, NULL, global_work_size, local_work_size,
                     0, NULL, NULL);
             checkError(err, "Enqueueing cell kernel");
 
-            err = clSetKernelArg(kernel_output, 0, sizeof(cl_mem), &d_s[j]);
+            err = clSetKernelArg(kernel_nonlinear, 1, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting output kernel args");
-            err = clEnqueueTask(commands, kernel_output, 0, NULL, NULL);
+            err = clEnqueueTask(commands, kernel_nonlinear, 0, NULL, NULL);
             checkError(err, "Enqueueing output kernel");
         }
 
@@ -739,8 +756,8 @@ int main(int argc, char *argv[])
 
     clReleaseProgram(program);
     clReleaseKernel(kernel_input);
-    clReleaseKernel(kernel_cell);
-    clReleaseKernel(kernel_output);
+    clReleaseKernel(kernel_matrix);
+    clReleaseKernel(kernel_nonlinear);
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
 

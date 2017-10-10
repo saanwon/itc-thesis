@@ -1,10 +1,6 @@
 #ifndef _KERNELDEF_H_
 #define _KERNELDEF_H_
 
-//#define RNN_CELL_SIZE     1500
-#define RNN_CELL_SIZE     200
-//#define RNN_CELL_SIZE     10
-
 /*
  * FLAGS
  */
