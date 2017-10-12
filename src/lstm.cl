@@ -1,11 +1,17 @@
 #include "kerneldefs.h"
 
+#define FADD_LAT        6
+
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
 
 #define MAX_CELL_SIZE   1500
 
-global float lstm_x_h[2*MAX_CELL_SIZE]  __attribute__((xcl_array_partition(complete,1)));
+#if FADD_LAT > 1
+global float lstm_x_h[2*MAX_CELL_SIZE] __attribute__((xcl_array_partition(cyclic,FADD_LAT,1)));
+#else
+global float lstm_x_h[2*MAX_CELL_SIZE] __attribute__((xcl_array_partition(complete,1)));
+#endif
 global float lstm_old_c[MAX_CELL_SIZE];
 global float lstm_new_h[MAX_CELL_SIZE];
 global float lstm_new_c[MAX_CELL_SIZE];
@@ -58,8 +64,8 @@ void lstm_matrix(               int    cell_size,
     int start_ci = global_id       * cell_size / global_threads;
     int end_ci   = (global_id + 1) * cell_size / global_threads;
 
-    float gates[4]; //__attribute__((xcl_array_partition(complete,1)));
-    float wloc[(2*MAX_CELL_SIZE+1) * 4] __attribute__((xcl_array_partition(cyclic,4,1)));
+    float gates[FADD_LAT*4]             __attribute__((xcl_array_partition(complete,1)));
+    float wloc[(2*MAX_CELL_SIZE+1) * 4] __attribute__((xcl_array_partition(cyclic,FADD_LAT*4,1)));
 
     loop_matrix: for (int ci = start_ci; ci < end_ci; ci++) {
         __global const float *Wl = W + ci * ((2*cell_size+1) * 4);
@@ -73,7 +79,33 @@ void lstm_matrix(               int    cell_size,
         loop_gates_init: for (int gi = 0, i = 2*cell_size*4; gi < 4; gi++, i++) {
             gates[gi] = wloc[i];
         }
+#if FADD_LAT > 1
+        __attribute__((xcl_pipeline_loop))
+        loop_gates_zero: for (int i = 1; i < FADD_LAT; i++) {
+            __attribute__((opencl_unroll_hint))
+            for (int gi = 0; gi < 4; gi++) {
+                gates[i*4+gi] = 0.0f;
+            }
+        }
 
+        __attribute__((xcl_pipeline_loop))
+        loop_gates_sum_p: for (int i = 0, j = 0; i < 2*cell_size; i += FADD_LAT) {
+            __attribute__((opencl_unroll_hint))
+            loop_gates_group: for (int k = 0; k < FADD_LAT; k++, j+=4) {
+                __attribute__((opencl_unroll_hint))
+                loop_gates_item: for (int gi = 0; gi < 4; gi++) {
+                    gates[k*4+gi] += lstm_x_h[i+k] * wloc[j+gi];
+                }
+            }
+        }
+        __attribute__((xcl_pipeline_loop))
+        loop_gates_sum_a: for (int i = 1; i < FADD_LAT; i++) {
+            __attribute__((opencl_unroll_hint))
+            for (int gi = 0; gi < 4; gi++) {
+                gates[gi] += gates[i*4+gi];
+            }
+        }
+#else
         __attribute__((xcl_pipeline_loop))
         loop_gates_sum: for (int i = 0, j = 0; i < 2*cell_size; i++, j+=4) {
             __attribute__((opencl_unroll_hint))
@@ -81,6 +113,7 @@ void lstm_matrix(               int    cell_size,
                 gates[gi] += lstm_x_h[i] * wloc[j+gi];
             }
         }
+#endif
 
         __attribute__((xcl_pipeline_loop))
         loop_gates_assign: for (int gi = 0; gi < 4; gi++) {

@@ -405,7 +405,7 @@ static int outputPipeFd[2] = {-1, -1};
 #else
 static pthread_cond_t outcb_buf_cond;
 static pthread_mutex_t outcb_buf_mutex;
-static int outcb_thread_quit = 0;
+//static int outcb_thread_quit = 0;
 static int outcb_buf_w = 0;
 static int outcb_buf_size[2];
 static int outcb_buf_len[2];
@@ -427,7 +427,7 @@ static void *cross_entropy_proc(void *arg)
     }
 #else
     pthread_mutex_lock(&outcb_buf_mutex);
-    while (! outcb_thread_quit && outcb_buf_total < TEST_LOOP_COUNT) {
+    while (outcb_buf_total < TEST_LOOP_COUNT) {
         if (outcb_buf_size[outcb_buf_w] == 0) {
             pthread_cond_wait(&outcb_buf_cond, &outcb_buf_mutex);
             continue;
@@ -501,7 +501,7 @@ static void stopCrossEntropyThread(void)
     processNextOutput(NULL);
 #else
     pthread_mutex_lock(&outcb_buf_mutex);
-    outcb_thread_quit = 1;
+    //outcb_thread_quit = 1;
     pthread_cond_signal(&outcb_buf_cond);
     pthread_mutex_unlock(&outcb_buf_mutex);
 #endif
