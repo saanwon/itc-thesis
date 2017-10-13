@@ -53,8 +53,8 @@ void lstm_matrix(               int    cell_size,
 {
     int vector_size = 2 * cell_size;
 
-    float gates[MAX_CELL_SIZE*4] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
-    float wloc[MAX_CELL_SIZE*4]  __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
+    float gates[(MAX_CELL_SIZE+RG_SIZE)*4] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
+    float wloc[(MAX_CELL_SIZE+RG_SIZE)*4]  __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
 
     __attribute__((xcl_pipeline_loop))
     loop_gates_init: for (int i = 0; i < cell_size*4; i++) {
@@ -68,6 +68,8 @@ void lstm_matrix(               int    cell_size,
             wloc[i] = Wl[i];
         }
 
+        private float   x_h = lstm_x_h[col];
+
         __attribute__((xcl_pipeline_loop))
         loop_matrix_row: for (int row = 0; row < cell_size; row+=RG_SIZE) {
 #if RG_SIZE > 1
@@ -75,8 +77,7 @@ void lstm_matrix(               int    cell_size,
             loop_matrix_p: for (int i = 0; i < RG_SIZE; i++) {
                 __attribute__((opencl_unroll_hint))
                 loop_gates_item: for (int gi = 0; gi < 4; gi++) {
-                    if ((row+i) < cell_size)
-                        gates[(row+i)*4 + gi] += lstm_x_h[col] * wloc[(row+i)*4 + gi];
+                    gates[(row+i)*4 + gi] += x_h * wloc[(row+i)*4 + gi];
                 }
             }
 #else
