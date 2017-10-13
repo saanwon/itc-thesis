@@ -1,21 +1,17 @@
 #include "kerneldefs.h"
 
-#define FADD_LAT        6
+#define RG_SIZE         10
 
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
 
 #define MAX_CELL_SIZE   1500
 
-#if FADD_LAT > 1
-global float lstm_x_h[2*MAX_CELL_SIZE] __attribute__((xcl_array_partition(cyclic,FADD_LAT,1)));
-#else
-global float lstm_x_h[2*MAX_CELL_SIZE] __attribute__((xcl_array_partition(complete,1)));
-#endif
+global float lstm_x_h[2*MAX_CELL_SIZE];
 global float lstm_old_c[MAX_CELL_SIZE];
 global float lstm_new_h[MAX_CELL_SIZE];
 global float lstm_new_c[MAX_CELL_SIZE];
-global float lstm_gates[MAX_CELL_SIZE*4];
+global float lstm_gates[MAX_CELL_SIZE*4] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
 
 __kernel
 __attribute__ ((reqd_work_group_size(1, 1, 1)))
@@ -40,13 +36,12 @@ void lstm_input(                int   cell_size,
             lstm_old_c[i] = 0;
         }
     } else {
-        int j = 0;
         __attribute__((xcl_pipeline_loop))
-        for (int i = cell_size; j < cell_size; ++i, ++j) {
+        for (int i = cell_size, j = 0; j < cell_size; ++i, ++j) {
             lstm_x_h[i] = state[j];
         }
         __attribute__((xcl_pipeline_loop))
-        for (int i = 0; i < cell_size; ++i, ++j) {
+        for (int i = 0, j = cell_size; i < cell_size; ++i, ++j) {
             lstm_old_c[i] = state[j];
         }
     }
@@ -58,66 +53,30 @@ void lstm_matrix(               int    cell_size,
                  __global const float *W)        // [cell_size, (2*cell_size+1)*4]
 
 {
-    int global_id       = get_global_id(0);
-    int global_threads  = get_global_size(0);
+    int vector_size = 2 * cell_size;
+    float wloc[2*MAX_CELL_SIZE*4] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
 
-    int start_ci = global_id       * cell_size / global_threads;
-    int end_ci   = (global_id + 1) * cell_size / global_threads;
+    __attribute__((xcl_pipeline_loop))
+    loop_gates_init: for (int i = 0; i < cell_size*4; i++) {
+        lstm_gates[i] = W[i];
+    }
 
-    float gates[FADD_LAT*4]             __attribute__((xcl_array_partition(complete,1)));
-    float wloc[(2*MAX_CELL_SIZE+1) * 4] __attribute__((xcl_array_partition(cyclic,FADD_LAT*4,1)));
-
-    loop_matrix: for (int ci = start_ci; ci < end_ci; ci++) {
-        __global const float *Wl = W + ci * ((2*cell_size+1) * 4);
-
+    loop_matrix_col: for (int col = 0; col < vector_size; col++) {
+        __global const float *Wl = W + (cell_size + col * cell_size) * 4;
         __attribute__((xcl_pipeline_loop))
-        loop_wloc_init: for (int i = 0; i < (2*cell_size+1) * 4; i++) {
+        loop_wloc_init: for (int i = 0; i < vector_size*4; i++) {
             wloc[i] = Wl[i];
         }
 
         __attribute__((xcl_pipeline_loop))
-        loop_gates_init: for (int gi = 0, i = 2*cell_size*4; gi < 4; gi++, i++) {
-            gates[gi] = wloc[i];
-        }
-#if FADD_LAT > 1
-        __attribute__((xcl_pipeline_loop))
-        loop_gates_zero: for (int i = 1; i < FADD_LAT; i++) {
+        loop_matrix_row: for (int row = 0; row < cell_size; row+=RG_SIZE) {
             __attribute__((opencl_unroll_hint))
-            for (int gi = 0; gi < 4; gi++) {
-                gates[i*4+gi] = 0.0f;
-            }
-        }
-
-        __attribute__((xcl_pipeline_loop))
-        loop_gates_sum_p: for (int i = 0, j = 0; i < 2*cell_size; i += FADD_LAT) {
-            __attribute__((opencl_unroll_hint))
-            loop_gates_group: for (int k = 0; k < FADD_LAT; k++, j+=4) {
+            loop_matrix_p: for (int i = 0; i < RG_SIZE; i++) {
                 __attribute__((opencl_unroll_hint))
-                loop_gates_item: for (int gi = 0; gi < 4; gi++) {
-                    gates[k*4+gi] += lstm_x_h[i+k] * wloc[j+gi];
+                loop_gates_item: for (int gi = 0, j = (row+i)*4; gi < 4; gi++, j++) {
+                    lstm_gates[j] += lstm_x_h[col] * wloc[j];
                 }
             }
-        }
-        __attribute__((xcl_pipeline_loop))
-        loop_gates_sum_a: for (int i = 1; i < FADD_LAT; i++) {
-            __attribute__((opencl_unroll_hint))
-            for (int gi = 0; gi < 4; gi++) {
-                gates[gi] += gates[i*4+gi];
-            }
-        }
-#else
-        __attribute__((xcl_pipeline_loop))
-        loop_gates_sum: for (int i = 0, j = 0; i < 2*cell_size; i++, j+=4) {
-            __attribute__((opencl_unroll_hint))
-            loop_gates_item: for (int gi = 0; gi < 4; gi++) {
-                gates[gi] += lstm_x_h[i] * wloc[j+gi];
-            }
-        }
-#endif
-
-        __attribute__((xcl_pipeline_loop))
-        loop_gates_assign: for (int gi = 0; gi < 4; gi++) {
-            lstm_gates[ci*4+gi] = gates[gi];
         }
     }
 }
@@ -127,13 +86,7 @@ __attribute__ ((reqd_work_group_size(1, 1, 1)))
 void lstm_nonlinear(           int  cell_size,
                     __global float *state) // [cell_size*2]
 {
-    int global_id       = get_global_id(0);
-    int global_threads  = get_global_size(0);
-
-    int start_ci = global_id       * cell_size / global_threads;
-    int end_ci   = (global_id + 1) * cell_size / global_threads;
-
-    loop_nonlinear: for (int ci = start_ci; ci < end_ci; ci++) {
+    loop_nonlinear: for (int ci = 0; ci < cell_size; ci++) {
 #define It      lstm_gates[ci*4+0]
 #define Jt      lstm_gates[ci*4+1]
 #define Ft      lstm_gates[ci*4+2]
@@ -151,11 +104,11 @@ void lstm_nonlinear(           int  cell_size,
     }
 
     __attribute__((xcl_pipeline_loop))
-    for (int i = start_ci, j = start_ci; i < end_ci; ++i, ++j) {
+    for (int i = 0, j = 0; i < cell_size; ++i, ++j) {
         state[j] = lstm_new_h[i];
     }
     __attribute__((xcl_pipeline_loop))
-    for (int i = start_ci, j = cell_size + start_ci; i < end_ci; ++i, ++j) {
+    for (int i = 0, j = cell_size + 0; i < cell_size; ++i, ++j) {
         state[j] = lstm_new_c[i];
     }
 }
