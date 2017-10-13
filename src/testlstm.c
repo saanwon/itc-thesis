@@ -189,12 +189,19 @@ static cl_float *load_lstm_params(const char *fname)
     for (int r = 0; r < hidden_size; ++r) {
         for (int z = 0; z < 4; z++) {
             int s = z*hidden_size;
-            for (int c = 0; c < (hidden_size*2+1); ++c)
+            for (int c = 0; c < (hidden_size*2+1); ++c) {
+                float v = params[s + r + hidden_size*4 * c];
 #if 0
-                *w++ = params[s + r + hidden_size*4 * c];
+                //*w++ = v;
+                w[(r*(hidden_size*2+1)+c)*4+z] = v;
 #else
-                w[(r*(hidden_size*2+1)+c)*4+z] = params[s + r + hidden_size*4 * c];
+                if (c == (hidden_size*2)) {
+                    w[r*4+z] = v;
+                } else {
+                    w[((1+c)*hidden_size+r)*4 + z] = v;
+                }
 #endif
+            }
         }
     }
 
