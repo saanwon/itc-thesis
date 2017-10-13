@@ -1,7 +1,6 @@
 #include "kerneldefs.h"
 
-#define RG_SIZE         10
-//#define RG_SIZE         1
+#define RG_SIZE         16 // must be 2^n
 
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
@@ -76,7 +75,8 @@ void lstm_matrix(               int    cell_size,
             loop_matrix_p: for (int i = 0; i < RG_SIZE; i++) {
                 __attribute__((opencl_unroll_hint))
                 loop_gates_item: for (int gi = 0; gi < 4; gi++) {
-                    gates[(row+i)*4 + gi] += lstm_x_h[col] * wloc[(row+i)*4 + gi];
+                    if ((row+i) < cell_size)
+                        gates[(row+i)*4 + gi] += lstm_x_h[col] * wloc[(row+i)*4 + gi];
                 }
             }
 #else
