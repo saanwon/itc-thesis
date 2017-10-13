@@ -1,6 +1,6 @@
 #include "kerneldefs.h"
 
-#define FADD_LAT        6
+#define FADD_LAT        4
 
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #define act_tanh(x)     tanh(x)
