@@ -18,11 +18,6 @@
 #define NUM_RNN_LAYERS  2
 
 
-#define RNN_CELL_SIZE     1500
-//#define RNN_CELL_SIZE     200
-//#define RNN_CELL_SIZE     10
-
-
 #ifndef PATH_MAX
 #define PATH_MAX        256
 #endif
