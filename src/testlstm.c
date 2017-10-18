@@ -18,11 +18,6 @@
 #define NUM_RNN_LAYERS  2
 
 
-#define RNN_CELL_SIZE     1500
-//#define RNN_CELL_SIZE     200
-//#define RNN_CELL_SIZE     10
-
-
 #ifndef PATH_MAX
 #define PATH_MAX        256
 #endif
@@ -641,12 +636,14 @@ int main(int argc, char *argv[])
                     sizeof(cl_float) * hidden_size, NULL, &err);
     checkError(err, "Creating buffer d_x");
 
+#if 0
     err = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &hidden_size);
     checkError(err, "Setting input kernel args");
     err = clSetKernelArg(kernel_matrix, 0, sizeof(cl_int), &hidden_size);
     checkError(err, "Setting cell kernel args");
     err = clSetKernelArg(kernel_nonlinear, 0, sizeof(cl_int), &hidden_size);
     checkError(err, "Setting output kernel args");
+#endif
 
 
     cl_mem d_s[NUM_RNN_LAYERS];
@@ -689,21 +686,21 @@ int main(int argc, char *argv[])
         if (i == 0)
             flags = LSTM_FLAG_INIT_STATE;
         for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
-            err  = clSetKernelArg(kernel_input, 1, sizeof(cl_int), &flags);
-            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
-            err |= clSetKernelArg(kernel_input, 3, sizeof(cl_mem), &d_s[j]);
+            err  = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &flags);
+            err |= clSetKernelArg(kernel_input, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
+            err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting input kernel args");
             err = clEnqueueTask(commands, kernel_input, 0, NULL, NULL);
             checkError(err, "Enqueueing input kernel");
 
-            err = clSetKernelArg(kernel_matrix, 1, sizeof(cl_mem), &d_w[j]);
+            err = clSetKernelArg(kernel_matrix, 0, sizeof(cl_mem), &d_w[j]);
             checkError(err, "Setting cell kernel args");
             err = clEnqueueNDRangeKernel(commands, kernel_matrix,
                     1, NULL, global_work_size, local_work_size,
                     0, NULL, NULL);
             checkError(err, "Enqueueing cell kernel");
 
-            err = clSetKernelArg(kernel_nonlinear, 1, sizeof(cl_mem), &d_s[j]);
+            err = clSetKernelArg(kernel_nonlinear, 0, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting output kernel args");
             err = clEnqueueTask(commands, kernel_nonlinear, 0, NULL, NULL);
             checkError(err, "Enqueueing output kernel");
