@@ -48,14 +48,10 @@ void lstm_input(                int   flags,
 __kernel
 __attribute__ ((reqd_work_group_size(1, 1, 1)))
 void lstm_matrix(__global const float *W)        // [cell_size, (2*cell_size+1)*4]
-
 {
-    int vector_size = 2 * RNN_CELL_SIZE;
-
-    float x_h[2*RNN_CELL_SIZE*RG_SIZE*4]        __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
-
-    float gates[ALIGNED_CELL_SIZE*4]            __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
-    float wloc[ALIGNED_CELL_SIZE*4]             __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
+    float x_h[2*RNN_CELL_SIZE*RG_SIZE*4]            __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
+    float gates[ALIGNED_CELL_SIZE*4]                __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
+    float wloc[2*RNN_CELL_SIZE*ALIGNED_CELL_SIZE*4] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
 
     __attribute__((xcl_pipeline_loop))
     loop_x_h_assign: for (int i = 0; i < 2*RNN_CELL_SIZE*RG_SIZE*4; i++) {
@@ -67,15 +63,18 @@ void lstm_matrix(__global const float *W)        // [cell_size, (2*cell_size+1)*
         gates[i] = W[i];
     }
 
-    loop_matrix_col: for (int col = 0; col < vector_size; col++) {
-        __global const float *Wl = W + (1+col) * RNN_CELL_SIZE * 4;
+    W += RNN_CELL_SIZE*4;
+    loop_wloc_init_a: for (int col = 0, j = 0, k = 0; col < 2*RNN_CELL_SIZE;
+                           col++, j+=ALIGNED_CELL_SIZE*4, k+=RNN_CELL_SIZE*4)
+    {
         __attribute__((xcl_pipeline_loop))
-        loop_wloc_init: for (int i = 0; i < RNN_CELL_SIZE*4; i++) {
-            wloc[i] = Wl[i];
+        loop_wloc_init_p: for (int i = 0; i < RNN_CELL_SIZE*4; i++) {
+            wloc[j+i] = W[k+i];
         }
+    }
 
-
-#if RG_SIZE > 1
+#if 0
+    loop_matrix_col: for (int col = 0, ws = 0; col < 2*RNN_CELL_SIZE; col++, ws += ALIGNED_CELL_SIZE) {
 #if 1
         __attribute__((xcl_pipeline_loop))
         loop_matrix_row: for (int row = 0; row < ALIGNED_CELL_SIZE; row+=RG_SIZE) {
@@ -83,7 +82,7 @@ void lstm_matrix(__global const float *W)        // [cell_size, (2*cell_size+1)*
             loop_matrix_p: for (int i = 0; i < RG_SIZE; i++) {
                 __attribute__((opencl_unroll_hint))
                 loop_gates_item: for (int gi = 0; gi < 4; gi++) {
-                    gates[(row+i)*4 + gi] += x_h[(col*RG_SIZE+i)*4+gi] * wloc[(row+i)*4 + gi];
+                    gates[(row+i)*4 + gi] += x_h[(col*RG_SIZE+i)*4+gi] * wloc[(ws+row+i)*4 + gi];
                 }
             }
         }
@@ -92,20 +91,30 @@ void lstm_matrix(__global const float *W)        // [cell_size, (2*cell_size+1)*
         loop_matrix_row: for (int row = 0; row < ALIGNED_CELL_SIZE; row++) {
             __attribute__((opencl_unroll_hint))
             loop_gates_item: for (int gi = 0; gi < 4; gi++) {
-                gates[row*4 + gi] += x_h[(col*RG_SIZE+(row%RG_SIZE))*4+gi] * wloc[row*4 + gi];
-            }
-        }
-#endif
-#else
-        __attribute__((xcl_pipeline_loop))
-        loop_matrix_row: for (int row = 0; row < RNN_CELL_SIZE; row++) {
-            __attribute__((opencl_unroll_hint))
-            loop_gates_item: for (int gi = 0; gi < 4; gi++) {
-                gates[row*4 + gi] += lstm_x_h[col] * wloc[row*4 + gi];
+                gates[row*4 + gi] += x_h[(col*RG_SIZE+(row%RG_SIZE))*4+gi] * wloc[(ws+row)*4 + gi];
             }
         }
 #endif
     }
+#else
+    __attribute__((xcl_pipeline_loop))
+    loop_matrix_col_row: for (int cr = 0, row = 0, col = 0;
+                              cr < 2*RNN_CELL_SIZE*ALIGNED_CELL_SIZE;
+                              row+=RG_SIZE, cr+=RG_SIZE)
+    {
+        if (row == ALIGNED_CELL_SIZE) {
+            row = 0;
+            col++;
+        }
+        __attribute__((opencl_unroll_hint))
+        loop_matrix_p: for (int i = 0; i < RG_SIZE; i++) {
+            __attribute__((opencl_unroll_hint))
+            loop_gates_item: for (int gi = 0; gi < 4; gi++) {
+                gates[(row+i)*4 + gi] += x_h[(col*RG_SIZE+i)*4+gi] * wloc[(col*ALIGNED_CELL_SIZE+row+i)*4 + gi];
+            }
+        }
+    }
+#endif
 
     __attribute__((xcl_pipeline_loop))
     loop_gates_out: for (int i = 0; i < RNN_CELL_SIZE*4; i++) {
