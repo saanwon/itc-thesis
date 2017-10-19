@@ -32,8 +32,8 @@
 #error "unsupported RNN_CELL_SIZE"
 #endif
 
-//#define TEST_LOOP_COUNT	(test_words_size-1)
-#define TEST_LOOP_COUNT	1000
+#define TEST_LOOP_COUNT	(test_words_size-1)
+//#define TEST_LOOP_COUNT	1000
 //#define TEST_LOOP_COUNT	2
 //#define TEST_LOOP_COUNT	1
 

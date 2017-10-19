@@ -51,6 +51,7 @@ void lstm_matrix(__global const float *W)        // [cell_size, (2*cell_size+1)*
 {
     float x_h[2*RNN_CELL_SIZE*RG_SIZE*4]            __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
     float gates[ALIGNED_CELL_SIZE*4]                __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
+    //float gates[ALIGNED_CELL_SIZE*4]                __attribute__((xcl_array_partition(complete,1)));
     float wloc[2*RNN_CELL_SIZE*ALIGNED_CELL_SIZE*4] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
 
     __attribute__((xcl_pipeline_loop))
@@ -97,6 +98,7 @@ void lstm_matrix(__global const float *W)        // [cell_size, (2*cell_size+1)*
 #endif
     }
 #else
+#if 0
     __attribute__((xcl_pipeline_loop))
     loop_matrix_a: for (int cr = 0, ri = 0, col = 0;
                         cr < 2*RNN_CELL_SIZE*ALIGNED_CELL_SIZE;
@@ -111,6 +113,18 @@ void lstm_matrix(__global const float *W)        // [cell_size, (2*cell_size+1)*
             gates[ri*RG_SIZE*4+i] += x_h[col*RG_SIZE*4+i] * wloc[(col*(ALIGNED_CELL_SIZE/RG_SIZE)+ri)*RG_SIZE*4 + i];
         }
     }
+#else
+    __attribute__((opencl_unroll_hint(RG_SIZE*4)))
+    loop_multiply: for (int i = 0; i < 2*RNN_CELL_SIZE*ALIGNED_CELL_SIZE*4; i++) {
+        wloc[i] *= x_h[i/(ALIGNED_CELL_SIZE*4) * (RG_SIZE*4) + i%(RG_SIZE*4)];
+    }
+    loop_sum_a: for (int j = 0; j < 2*RNN_CELL_SIZE; j++) {
+        __attribute__((opencl_unroll_hint(RG_SIZE*4)))
+        loop_sum_p: for (int i = 0; i < ALIGNED_CELL_SIZE*4; i++) {
+            gates[i] += wloc[j*ALIGNED_CELL_SIZE*4+i];
+        }
+    }
+#endif
 #endif
 
     __attribute__((xcl_pipeline_loop))
