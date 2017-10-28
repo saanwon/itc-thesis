@@ -1,7 +1,9 @@
 #ifndef _KERNELDEF_H_
 #define _KERNELDEF_H_
 
-#define VECTOR_SIZE     4
+#define NUM_COMPUTE_UNITS       2
+
+#define VECTOR_SIZE     8
 #if VECTOR_SIZE == 4
 #define VECTOR_TYPE     float4
 #elif VECTOR_SIZE == 8

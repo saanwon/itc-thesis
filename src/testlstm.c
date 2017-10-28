@@ -13,8 +13,6 @@
 
 #include "kerneldefs.h"
 
-#define NUM_COMPUTE_UNITS       1
-
 #define NUM_RNN_LAYERS  2
 
 
@@ -695,14 +693,14 @@ int main(int argc, char *argv[])
 
             err = clSetKernelArg(kernel_matrix, 0, sizeof(cl_mem), &d_w[j]);
             checkError(err, "Setting cell kernel args");
-            err = clEnqueueNDRangeKernel(commands, kernel_matrix,
-                    1, NULL, global_work_size, local_work_size,
-                    0, NULL, NULL);
+            err = clEnqueueTask(commands, kernel_matrix, 0, NULL, NULL);
             checkError(err, "Enqueueing cell kernel");
 
             err = clSetKernelArg(kernel_nonlinear, 0, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting output kernel args");
-            err = clEnqueueTask(commands, kernel_nonlinear, 0, NULL, NULL);
+            err = clEnqueueNDRangeKernel(commands, kernel_nonlinear,
+                    1, NULL, global_work_size, local_work_size,
+                    0, NULL, NULL);
             checkError(err, "Enqueueing output kernel");
         }
 

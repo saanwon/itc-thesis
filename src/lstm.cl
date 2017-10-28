@@ -5,9 +5,6 @@
 #define ALIGNED_GATE_SIZE       ((RNN_CELL_SIZE*4+(VECTOR_SIZE-1))/(VECTOR_SIZE))
 
 
-//#define RG_SIZE         16 // must be 2^n
-#define RG_SIZE         1 // must be 2^n
-
 #if 1
 #define act_sigm(x)     (1.0f / (1.0f + exp(-(x))))
 #else
@@ -52,8 +49,6 @@ void lstm_input(                int   flags,
     }
 }
 
-
-#define ALIGNED_CELL_SIZE    (((RNN_CELL_SIZE+(RG_SIZE-1))/RG_SIZE)*RG_SIZE)
 
 __kernel
 __attribute__ ((reqd_work_group_size(1, 1, 1)))
@@ -107,26 +102,120 @@ void lstm_matrix(__global const VECTOR_TYPE *W)        // [cell_size, (2*cell_si
     }
 }
 
+#if 0
+#define ALIGNED_CELL_SIZE    (((RNN_CELL_SIZE+(VECTOR_SIZE-1))/VECTOR_SIZE)*VECTOR_SIZE)
+
 __kernel
 __attribute__ ((reqd_work_group_size(1, 1, 1)))
 void lstm_nonlinear(__global float *state) // [cell_size*2]
 {
-    float gates[ALIGNED_CELL_SIZE*4]    __attribute__((xcl_array_partition(cyclic,VECTOR_SIZE*4,1)));
-    float old_c[RNN_CELL_SIZE]          __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
-    float lstm_new_h[ALIGNED_CELL_SIZE] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
-    float lstm_new_c[ALIGNED_CELL_SIZE] __attribute__((xcl_array_partition(cyclic,RG_SIZE*4,1)));
+    float gates[ALIGNED_GATE_SIZE*VECTOR_SIZE] __attribute__((xcl_array_partition(cyclic,VECTOR_SIZE*4,1)));
+    float old_c[RNN_CELL_SIZE]          __attribute__((xcl_array_partition(cyclic,VECTOR_SIZE,1)));
+    float lstm_new_h[ALIGNED_CELL_SIZE] __attribute__((xcl_array_partition(cyclic,VECTOR_SIZE,1)));
+    float lstm_new_c[ALIGNED_CELL_SIZE] __attribute__((xcl_array_partition(cyclic,VECTOR_SIZE,1)));
 
-    __attribute__((xcl_pipeline_loop))
-    loop_gates_in: for (int i = 0; i < RNN_CELL_SIZE*4; i++) {
-        gates[i] = lstm_gates[i];
-    }
     __attribute__((xcl_pipeline_loop))
     loop_old_c: for (int i = 0; i < RNN_CELL_SIZE; i++) {
         old_c[i] = lstm_old_c[i];
     }
 
-    __attribute__((opencl_unroll_hint(RG_SIZE*4)))
-    loop_nonlinear: for (int ci = 0; ci < ALIGNED_CELL_SIZE; ci++) {
+#if 1
+    __attribute__((xcl_pipeline_loop))
+    loop_gates_in: for (int i = 0; i < RNN_CELL_SIZE*4; i++) {
+        gates[i] = lstm_gates[i];
+    }
+
+    //__attribute__((opencl_unroll_hint(VECTOR_SIZE)))
+    loop_nonlinear_a: for (int i = 0; i < ALIGNED_CELL_SIZE/2; i++) {
+        __attribute__((opencl_unroll_hint))
+        loop_nonlinear_p: for (int j = 0; j < 2; j++) {
+#define It      gates[(i*2+j)*4+0]
+#define Jt      gates[(i*2+j)*4+1]
+#define Ft      gates[(i*2+j)*4+2]
+#define Ot      gates[(i*2+j)*4+3]
+
+            It = act_sigm(It);
+            Ft = act_sigm(Ft);
+            Ot = act_sigm(Ot);
+            Jt = act_tanh(Jt);
+
+            // New Cell Status
+            lstm_new_c[(i*2+j)] = Ft * old_c[(i*2+j)] + It * Jt;
+            // New Hidden Status
+            lstm_new_h[(i*2+j)] = Ot * act_tanh(lstm_new_c[(i*2+j)]);
+        }
+    }
+#else
+    __attribute__((xcl_pipeline_loop))
+    loop_gates_in: for (int i = 0; i < RNN_CELL_SIZE*4; i++) {
+        int j = (i & (~3));
+        if ((i%4) == 1) j += 3;
+        if ((i%4) == 2) j += 1;
+        if ((i%4) == 3) j += 2;
+        gates[j] = lstm_gates[i];
+    }
+
+#define It      gates[ci*4+0]
+#define Ft      gates[ci*4+1]
+#define Ot      gates[ci*4+2]
+#define Jt      gates[ci*4+3]
+
+    __attribute__((opencl_unroll_hint(VECTOR_SIZE)))
+    loop_gate_i: for (int i = 0; i < ALIGNED_CELL_SIZE * 3; i++) {
+        gates[(i/3)*4+i%3] = act_sigm(gates[(i/3)*4+i%3]);
+    }
+    __attribute__((opencl_unroll_hint(VECTOR_SIZE)))
+    loop_gate_f: for (int ci = 0; ci < ALIGNED_CELL_SIZE; ci++) {
+        Jt = act_tanh(Jt);
+    }
+    __attribute__((opencl_unroll_hint(VECTOR_SIZE)))
+    loop_new_c: for (int ci = 0; ci < ALIGNED_CELL_SIZE; ci++) {
+        lstm_new_c[ci] = Ft * old_c[ci] + It * Jt;
+    }
+    __attribute__((opencl_unroll_hint(VECTOR_SIZE)))
+    loop_new_h: for (int ci = 0; ci < ALIGNED_CELL_SIZE; ci++) {
+        lstm_new_h[ci] = Ot * act_tanh(lstm_new_c[ci]);
+    }
+#endif
+
+    __attribute__((xcl_pipeline_loop))
+    for (int i = 0, j = 0; i < RNN_CELL_SIZE; ++i, ++j) {
+        state[j] = lstm_new_h[i];
+    }
+    __attribute__((xcl_pipeline_loop))
+    for (int i = 0, j = RNN_CELL_SIZE + 0; i < RNN_CELL_SIZE; ++i, ++j) {
+        state[j] = lstm_new_c[i];
+    }
+}
+#else
+
+#define CU_CELL_SIZE    ((RNN_CELL_SIZE+(NUM_COMPUTE_UNITS-1))/NUM_COMPUTE_UNITS)
+
+__kernel
+__attribute__ ((reqd_work_group_size(1, 1, 1)))
+void lstm_nonlinear(__global float *state) // [cell_size*2]
+{
+    int global_id       = get_global_id(0);
+    int global_threads  = get_global_size(0);
+
+    int start_ci = global_id       * RNN_CELL_SIZE / global_threads;
+    int end_ci   = (global_id + 1) * RNN_CELL_SIZE / global_threads;
+    int num_ci = end_ci - start_ci;
+
+    float gates[CU_CELL_SIZE*4] __attribute__((xcl_array_partition(cyclic,4,1)));
+    float new_h[CU_CELL_SIZE];
+    float new_c[CU_CELL_SIZE];
+
+    __attribute__((xcl_pipeline_loop))
+    loop_old_c: for (int i = 0, j = start_ci; i < num_ci; i++, j++) {
+        new_c[i] = lstm_old_c[j];
+    }
+    __attribute__((xcl_pipeline_loop))
+    loop_gates_in: for (int i = 0, j = start_ci*4; i < num_ci*4; i++, j++) {
+        gates[i] = lstm_gates[j];
+    }
+
+    loop_nonlinear: for (int ci = 0; ci < num_ci; ci++) {
 #define It      gates[ci*4+0]
 #define Jt      gates[ci*4+1]
 #define Ft      gates[ci*4+2]
@@ -138,17 +227,18 @@ void lstm_nonlinear(__global float *state) // [cell_size*2]
         Jt = act_tanh(Jt);
 
         // New Cell Status
-        lstm_new_c[ci] = Ft * old_c[ci] + It * Jt;
+        new_c[ci] = Ft * new_c[ci] + It * Jt;
         // New Hidden Status
-        lstm_new_h[ci] = Ot * act_tanh(lstm_new_c[ci]);
+        new_h[ci] = Ot * act_tanh(new_c[ci]);
     }
 
     __attribute__((xcl_pipeline_loop))
-    for (int i = 0, j = 0; i < RNN_CELL_SIZE; ++i, ++j) {
-        state[j] = lstm_new_h[i];
+    for (int i = 0, j = start_ci; i < num_ci; ++i, ++j) {
+        state[j] = new_h[i];
     }
     __attribute__((xcl_pipeline_loop))
-    for (int i = 0, j = RNN_CELL_SIZE + 0; i < RNN_CELL_SIZE; ++i, ++j) {
-        state[j] = lstm_new_c[i];
+    for (int i = 0, j = RNN_CELL_SIZE + start_ci; i < num_ci; ++i, ++j) {
+        state[j] = new_c[i];
     }
 }
+#endif
