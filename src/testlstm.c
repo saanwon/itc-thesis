@@ -13,6 +13,9 @@
 
 #include "kerneldefs.h"
 
+#define V_HIDDEN_SIZE (((hidden_size+VECTOR_SIZE-1)/VECTOR_SIZE)*VECTOR_SIZE)
+#define V_GATE_SIZE   (((4*hidden_size+VECTOR_SIZE-1)/VECTOR_SIZE)*VECTOR_SIZE)
+
 #define NUM_RNN_LAYERS  2
 
 
@@ -174,7 +177,8 @@ static cl_float *load_lstm_params(const char *fname)
     close(fd);
 
 #ifndef USE_XCL_DATAFLOW
-    cl_float *weights = (cl_float *) malloc(statbuf.st_size);
+    //cl_float *weights = (cl_float *) malloc(statbuf.st_size);
+    cl_float *weights = (cl_float *) malloc((2*hidden_size+1)*V_GATE_SIZE * sizeof(cl_float));
     assert(weights != NULL);
 #endif
 
@@ -191,7 +195,7 @@ static cl_float *load_lstm_params(const char *fname)
                 if (c == (hidden_size*2)) {
                     w[r*4+z] = v;
                 } else {
-                    w[((1+c)*hidden_size+r)*4 + z] = v;
+                    w[(1+c)*V_GATE_SIZE+r*4 + z] = v;
                 }
 #endif
             }
@@ -619,19 +623,22 @@ int main(int argc, char *argv[])
     }
 
     // Create the compute kernel from the program
+#if 0
     cl_kernel kernel_input = clCreateKernel(program, "lstm_input", &err);
     checkError(err, "Creating lstm kernel");
-
+#endif
     cl_kernel kernel_matrix = clCreateKernel(program, "lstm_matrix", &err);
     checkError(err, "Creating lstm kernel");
 
+#ifdef NUM_COMPUTE_UNITS
     cl_kernel kernel_nonlinear = clCreateKernel(program, "lstm_nonlinear", &err);
     checkError(err, "Creating lstm kernel");
+#endif
 
     cl_float *h_x = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
     assert(h_x != NULL);
     cl_mem d_x = clCreateBuffer(context, CL_MEM_READ_ONLY,
-                    sizeof(cl_float) * hidden_size, NULL, &err);
+                    sizeof(cl_float) * V_HIDDEN_SIZE, NULL, &err);
     checkError(err, "Creating buffer d_x");
 
 #if 0
@@ -648,11 +655,11 @@ int main(int argc, char *argv[])
     cl_mem d_w[NUM_RNN_LAYERS];
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
         d_s[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
-                        sizeof(cl_float) * hidden_size * 2, NULL, &err);
+                        sizeof(cl_float) * V_HIDDEN_SIZE * 2, NULL, &err);
         checkError(err, "Creating buffer d_s");
 
         d_w[i] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                    sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
+                    sizeof(cl_float) * (2*hidden_size+1) * V_GATE_SIZE,
                     lstm_weights[i], &err);
         checkError(err, "Creating buffer d_w");
     }
@@ -664,8 +671,10 @@ int main(int argc, char *argv[])
     startCrossEntropyThread();
 #endif
 
+#ifdef NUM_COMPUTE_UNITS
     size_t global_work_size[3] = {NUM_COMPUTE_UNITS, 1, 1};
     size_t local_work_size[3] = {1, 1, 1};
+#endif
     int percent = 0;
 
     double rtime = wtime();
@@ -684,6 +693,7 @@ int main(int argc, char *argv[])
         if (i == 0)
             flags = LSTM_FLAG_INIT_STATE;
         for (int j = 0; j < NUM_RNN_LAYERS; ++j) {
+#if 0
             err  = clSetKernelArg(kernel_input, 0, sizeof(cl_int), &flags);
             err |= clSetKernelArg(kernel_input, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
             err |= clSetKernelArg(kernel_input, 2, sizeof(cl_mem), &d_s[j]);
@@ -692,16 +702,25 @@ int main(int argc, char *argv[])
             checkError(err, "Enqueueing input kernel");
 
             err = clSetKernelArg(kernel_matrix, 0, sizeof(cl_mem), &d_w[j]);
+#else
+            err  = clSetKernelArg(kernel_matrix, 0, sizeof(cl_int), &flags);
+            err |= clSetKernelArg(kernel_matrix, 1, sizeof(cl_mem), j ? &d_s[j-1] : &d_x);
+            err |= clSetKernelArg(kernel_matrix, 2, sizeof(cl_mem), &d_s[j]);
+            err |= clSetKernelArg(kernel_matrix, 3, sizeof(cl_mem), &d_w[j]);
+#endif
             checkError(err, "Setting cell kernel args");
             err = clEnqueueTask(commands, kernel_matrix, 0, NULL, NULL);
             checkError(err, "Enqueueing cell kernel");
 
+#ifdef NUM_COMPUTE_UNITS
+            //err  = clSetKernelArg(kernel_nonlinear, 0, sizeof(cl_int), &flags);
             err = clSetKernelArg(kernel_nonlinear, 0, sizeof(cl_mem), &d_s[j]);
             checkError(err, "Setting output kernel args");
             err = clEnqueueNDRangeKernel(commands, kernel_nonlinear,
                     1, NULL, global_work_size, local_work_size,
                     0, NULL, NULL);
             checkError(err, "Enqueueing output kernel");
+#endif
         }
 
         struct output_cb *pcb = (struct output_cb *) malloc(sizeof(struct output_cb));
@@ -757,9 +776,11 @@ int main(int argc, char *argv[])
 #endif /* USE_XCL_DATAFLOW */
 
     clReleaseProgram(program);
-    clReleaseKernel(kernel_input);
+//    clReleaseKernel(kernel_input);
     clReleaseKernel(kernel_matrix);
+#ifdef NUM_COMPUTE_UNITS
     clReleaseKernel(kernel_nonlinear);
+#endif
     clReleaseCommandQueue(commands);
     clReleaseContext(context);
 

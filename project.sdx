@@ -4,15 +4,11 @@
     <configBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true">
       <binaryContainers name="binary_container_1">
         <kernels name="lstm_matrix" sourceFile="src/lstm.cl"/>
-        <kernels name="lstm_nonlinear" sourceFile="src/lstm.cl" numComputeUnits="2"/>
-        <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </configBuildOptions>
     <lastBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true">
       <binaryContainers name="binary_container_1">
         <kernels name="lstm_matrix" sourceFile="src/lstm.cl"/>
-        <kernels name="lstm_nonlinear" sourceFile="src/lstm.cl" numComputeUnits="2"/>
-        <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </lastBuildOptions>
   </configuration>
@@ -20,8 +16,6 @@
     <configBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true" target="hw_emu">
       <binaryContainers name="binary_container_1">
         <kernels name="lstm_matrix" sourceFile="src/lstm.cl"/>
-        <kernels name="lstm_nonlinear" sourceFile="src/lstm.cl" numComputeUnits="2"/>
-        <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </configBuildOptions>
     <lastBuildOptions xsi:type="openclProject:OpenCLOptions" kernelDebug="true" target="hw_emu">
@@ -36,15 +30,11 @@
     <configBuildOptions xsi:type="openclProject:OpenCLOptions" target="hw">
       <binaryContainers name="binary_container_1">
         <kernels name="lstm_matrix" sourceFile="src/lstm.cl"/>
-        <kernels name="lstm_nonlinear" sourceFile="src/lstm.cl" numComputeUnits="2"/>
-        <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </configBuildOptions>
     <lastBuildOptions xsi:type="openclProject:OpenCLOptions" target="hw">
       <binaryContainers name="binary_container_1">
         <kernels name="lstm_matrix" sourceFile="src/lstm.cl"/>
-        <kernels name="lstm_nonlinear" sourceFile="src/lstm.cl" numComputeUnits="2"/>
-        <kernels name="lstm_input" sourceFile="src/lstm.cl"/>
       </binaryContainers>
     </lastBuildOptions>
   </configuration>
