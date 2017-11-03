@@ -21,8 +21,8 @@
         <kernels name="lstm_layer3" sourceFile="src/lstm.cl"/>
         <kernels name="lstm_layer4" sourceFile="src/lstm.cl"/>
         <kernels name="lstm_layer5" sourceFile="src/lstm.cl"/>
-        <kernels name="lstm_layer6" sourceFile="src/lstm.cl"/>
-        <kernels name="lstm_layer7" sourceFile="src/lstm.cl"/>
+        <kernels name="lstm_layer6" sourceFile="System.16/_xocc_link_binary_container_1/impl/kernels/lstm_layer5/lstm_layer5/cpu_sources/lstm.cl"/>
+        <kernels name="lstm_layer7" sourceFile="System.16/_xocc_link_binary_container_1/impl/kernels/lstm_layer5/lstm_layer5/cpu_sources/lstm.cl"/>
       </binaryContainers>
     </lastBuildOptions>
   </configuration>

@@ -10,36 +10,37 @@
 #include <pthread.h>
 #include <assert.h>
 #include <CL/opencl.h>
+#include <CL/cl_ext.h>
 
 #include "kerneldefs.h"
 
-//#define RNN_CELL_SIZE     1500
-#define RNN_CELL_SIZE     200
-//#define RNN_CELL_SIZE     10
+#define V_HIDDEN_SIZE (((hidden_size+VECTOR_SIZE-1)/VECTOR_SIZE)*VECTOR_SIZE)
+#define V_GATE_SIZE   (((4*hidden_size+VECTOR_SIZE-1)/VECTOR_SIZE)*VECTOR_SIZE)
 
+#define NUM_RNN_LAYERS  8
+//#define NUM_RNN_LAYERS  2
 
-#define NUM_RNN_LAYERS  2
 
 #ifndef PATH_MAX
 #define PATH_MAX        256
 #endif
 
-#if RNN_CELL_SIZE == 200
+#if RNN_CELL_SIZE == 1500
+#define DEFAULT_DATA_DIR		"../../data.large"
+#elif RNN_CELL_SIZE == 200
 #define DEFAULT_DATA_DIR		"../../data.small"
-#else
+#elif RNN_CELL_SIZE == 10
 #define DEFAULT_DATA_DIR		"../../data.tiny"
+#else
+#error "unsupported RNN_CELL_SIZE"
 #endif
-
-//#define USE_SINGLE_QUEUE
-
-#define CALC_PERPLEXITY
-//#define USE_PIPE_FD_FOR_CALC
 
 #define TEST_LOOP_COUNT	(test_words_size-1)
 //#define TEST_LOOP_COUNT	1000
 //#define TEST_LOOP_COUNT	2
 //#define TEST_LOOP_COUNT	1
 
+#define CALC_PERPLEXITY
 //#define NO_KERNEL_CALL
 
 #include "err_code.h"
@@ -178,7 +179,8 @@ static cl_float *load_lstm_params(const char *fname)
     close(fd);
 
 #ifndef USE_XCL_DATAFLOW
-    cl_float *weights = (cl_float *) malloc(statbuf.st_size);
+    //cl_float *weights = (cl_float *) malloc(statbuf.st_size);
+    cl_float *weights = (cl_float *) malloc((2*hidden_size+1)*V_GATE_SIZE * sizeof(cl_float));
     assert(weights != NULL);
 #endif
 
@@ -186,12 +188,19 @@ static cl_float *load_lstm_params(const char *fname)
     for (int r = 0; r < hidden_size; ++r) {
         for (int z = 0; z < 4; z++) {
             int s = z*hidden_size;
-            for (int c = 0; c < (hidden_size*2+1); ++c)
+            for (int c = 0; c < (hidden_size*2+1); ++c) {
+                float v = params[s + r + hidden_size*4 * c];
 #if 0
-                *w++ = params[s + r + hidden_size*4 * c];
+                //*w++ = v;
+                w[(r*(hidden_size*2+1)+c)*4+z] = v;
 #else
-                w[(r*(hidden_size*2+1)+c)*4+z] = params[s + r + hidden_size*4 * c];
+                if (c == (hidden_size*2)) {
+                    w[r*4+z] = v;
+                } else {
+                    w[(1+c)*V_GATE_SIZE+r*4 + z] = v;
+                }
 #endif
+            }
         }
     }
 
@@ -424,7 +433,7 @@ static void *cross_entropy_proc(void *arg)
     }
 #else
     pthread_mutex_lock(&outcb_buf_mutex);
-    while (/*! outcb_thread_quit && */outcb_buf_total < TEST_LOOP_COUNT) {
+    while (outcb_buf_total < TEST_LOOP_COUNT) {
         if (outcb_buf_size[outcb_buf_w] == 0) {
             pthread_cond_wait(&outcb_buf_cond, &outcb_buf_mutex);
             continue;
@@ -498,7 +507,7 @@ static void stopCrossEntropyThread(void)
     processNextOutput(NULL);
 #else
     pthread_mutex_lock(&outcb_buf_mutex);
-//    outcb_thread_quit = 1;
+    //outcb_thread_quit = 1;
     pthread_cond_signal(&outcb_buf_cond);
     pthread_mutex_unlock(&outcb_buf_mutex);
 #endif
@@ -638,7 +647,7 @@ int main(int argc, char *argv[])
         h_x[i] = (cl_float *) malloc(sizeof(cl_float) * hidden_size);
         assert(h_x[i] != NULL);
         d_x[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
-                        sizeof(cl_float) * hidden_size, NULL, &err);
+                        sizeof(cl_float) * V_HIDDEN_SIZE, NULL, &err);
         checkError(err, "Creating buffer d_x");
     }
 
@@ -646,11 +655,11 @@ int main(int argc, char *argv[])
     cl_mem d_w[NUM_RNN_LAYERS];
     for (int i = 0; i < NUM_RNN_LAYERS; ++i) {
         d_s[i] = clCreateBuffer(context, CL_MEM_READ_ONLY,
-                        sizeof(cl_float) * hidden_size * 2, NULL, &err);
+                        sizeof(cl_float) * V_HIDDEN_SIZE * 2, NULL, &err);
         checkError(err, "Creating buffer d_s");
 
         d_w[i] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                    sizeof(cl_float) * ((2*hidden_size+1)*4) * hidden_size,
+                    sizeof(cl_float) * (2*hidden_size+1) * V_GATE_SIZE,
                     lstm_weights[i], &err);
         checkError(err, "Creating buffer d_w");
     }
